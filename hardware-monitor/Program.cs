@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Diagnostics;
 using System.IO.Ports;
+using System.Reflection;
 using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.PawnIo;
 
@@ -82,8 +83,69 @@ if (gpu == null)
 Console.WriteLine("Retrieved GPU: {0}", gpu.Name);
 
 // establish serial port
-// SerialPort serialPort = new SerialPort("COM3", 115200, Parity.None, 8, StopBits.One);
-// serialPort.Open();
+string[] ports = SerialPort.GetPortNames();
+SerialPort? serialPort = null;
+if(ports.Length == 0)
+{
+    Console.WriteLine("No display device connected. Exiting...");
+    return;
+}
+
+if(ports.Length == 1)
+{
+    serialPort = new SerialPort(ports[0], 115200, Parity.None, 8, StopBits.One);
+} else
+{
+    // prompt user for which COM port to use
+    Console.WriteLine("Multiple COM ports detected. Please input the number of the COM port to use and press enter.");
+    int idx = 1;
+    foreach (string port in ports)
+    {
+        Console.WriteLine("{0}: COM Port: {1}", idx++, port);
+    }
+
+    int comPortSelected = -1;
+    while (comPortSelected == -1)
+    {
+        string? input = Console.ReadLine();
+        if (input != null)
+        {
+            try
+            {
+                int parsedVal = int.Parse(input);
+                if(parsedVal >= 1 && parsedVal <= ports.Length)
+                {
+                    comPortSelected = parsedVal - 1;
+                    serialPort = new SerialPort(ports[comPortSelected], 115200, Parity.None, 8, StopBits.One);
+                    Console.WriteLine("COM port {0} selected.", ports[comPortSelected]);
+                }
+            } catch(Exception)
+            {
+                continue;
+            }
+        }
+    }
+}
+
+if(serialPort != null)
+{
+    try
+    {
+        serialPort.Open();
+    }
+    catch(Exception)
+    {
+        Console.WriteLine("Unable to open serial port with port name {0}", serialPort.PortName);
+        return;
+    }
+    
+} else
+{
+    Console.WriteLine("Unable to retrieve a connected display device device. Exiting...");
+    return;
+}
+
+Console.WriteLine("Successfully opened serial port with port name {0}", serialPort.PortName);
 
 while (true)
 {
@@ -93,9 +155,9 @@ while (true)
     // gpu = GetGPU(computer, HardwareType.GpuNvidia);
     int gpuTemp = GetGPUTemp(gpu);
 
-    Console.WriteLine("Retrieved cpu temp:{0} and gpu temp:{1}", cpuTemp, gpuTemp);
+    // Console.WriteLine("Retrieved cpu temp:{0} and gpu temp:{1}", cpuTemp, gpuTemp);
 
-    // WriteToSerial(serialPort, cpuTemp, gpuTemp);
+    WriteToSerial(serialPort, cpuTemp, gpuTemp);
 
     Thread.Sleep(1000);
 }
@@ -148,19 +210,6 @@ static IHardware? GetCPU(Computer computer)
     return null;
 }
 
-// static IHardware? GetGPU(Computer computer)
-// {
-//     foreach (IHardware hardware in computer.Hardware)
-//     {
-//         if (hardware.HardwareType == HardwareType.GpuNvidia)
-//         {
-//             return hardware;
-//         }
-//     }
-
-//     return null;
-// }
-
 static List<IHardware> ListGPUs(Computer computer)
 {
     List<IHardware> result = new List<IHardware>();
@@ -175,19 +224,6 @@ static List<IHardware> ListGPUs(Computer computer)
     }
 
     return result;
-}
-
-static IHardware? GetGPU(Computer computer, HardwareType type)
-{
-    foreach (IHardware hardware in computer.Hardware)
-    {
-        if (hardware.HardwareType == type)
-        {
-            return hardware;
-        }
-    }
-
-    return null;
 }
 
 static int GetCPUTemp(IHardware hardware)
@@ -216,8 +252,12 @@ static int GetGPUTemp(IHardware hardware)
     {
         if (sensor.SensorType == SensorType.Temperature && sensor.Name.Contains("Core"))
         {
-            float temp = (float)sensor.Value;
-            return (int)temp;
+            if (sensor.Value.HasValue)
+            {
+                return (int)sensor.Value;
+            }
+
+            return 0;
         }
     }
 

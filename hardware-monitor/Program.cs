@@ -88,6 +88,7 @@ SerialPort? serialPort = null;
 if(ports.Length == 0)
 {
     Console.WriteLine("No display device connected. Exiting...");
+    Console.ReadLine();
     return;
 }
 
@@ -136,12 +137,14 @@ if(serialPort != null)
     catch(Exception)
     {
         Console.WriteLine("Unable to open serial port with port name {0}", serialPort.PortName);
+        Console.ReadLine();
         return;
     }
     
 } else
 {
     Console.WriteLine("Unable to retrieve a connected display device device. Exiting...");
+    Console.ReadLine();
     return;
 }
 

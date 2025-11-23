@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.IO.Ports;
 using LibreHardwareMonitor.Hardware;
 
 Console.WriteLine("Retrieving devices...");
@@ -20,6 +21,10 @@ if (gpu == null)
 }
 Console.WriteLine("Retrieved GPU: {0}", gpu.Name);
 
+// establish serial port
+SerialPort serialPort = new SerialPort("COM3", 115200, Parity.None, 8, StopBits.One);
+serialPort.Open();
+
 while (true)
 {
     cpu = GetCPU(computer);
@@ -30,9 +35,26 @@ while (true)
 
     Console.WriteLine("Retrieved cpu temp:{0} and gpu temp:{1}", cpuTemp, gpuTemp);
 
-
+    WriteToSerial(serialPort, cpuTemp, gpuTemp);
 
     Thread.Sleep(1000);
+}
+
+static void WriteToSerial(SerialPort serialPort, int cpuTemp, int gpuTemp)
+{
+    String cpuStr = cpuTemp.ToString();
+    if(cpuTemp < 10)
+    {
+        cpuStr = "0" + cpuStr;
+    }
+
+    String gpuStr = gpuTemp.ToString();
+    if(gpuTemp < 10)
+    {
+        gpuStr = "0" + gpuStr;
+    }
+
+    serialPort.Write(cpuStr+":"+gpuStr+"\n");
 }
 
 static Computer OpenComputer()

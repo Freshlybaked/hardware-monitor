@@ -143,7 +143,7 @@ if(serialPort != null)
     
 } else
 {
-    Console.WriteLine("Unable to retrieve a connected display device device. Exiting...");
+    Console.WriteLine("Unable to retrieve a connected display device. Exiting...");
     Console.ReadLine();
     return;
 }

@@ -2,8 +2,12 @@
 using System.Diagnostics;
 using System.IO.Ports;
 using System.Reflection;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.PawnIo;
+using Zeroconf;
 
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
@@ -128,27 +132,38 @@ if(ports.Length == 1)
     }
 }
 
-if(serialPort != null)
-{
-    try
-    {
-        serialPort.Open();
-    }
-    catch(Exception)
-    {
-        Console.WriteLine("Unable to open serial port with port name {0}", serialPort.PortName);
-        Console.ReadLine();
-        return;
-    }
+// if(serialPort != null)
+// {
+//     try
+//     {
+//         serialPort.Open();
+//     }
+//     catch(Exception)
+//     {
+//         Console.WriteLine("Unable to open serial port with port name {0}", serialPort.PortName);
+//         Console.ReadLine();
+//         return;
+//     }
     
-} else
+// } else
+// {
+//     Console.WriteLine("Unable to retrieve a connected display device. Exiting...");
+//     Console.ReadLine();
+//     return;
+// }
+
+// Console.WriteLine("Successfully opened serial port with port name {0}", serialPort.PortName);
+
+// establish udp connection
+UdpClient udpClient = new UdpClient();
+String espIp = await FindEsp32Ip();
+
+if(espIp == null)
 {
-    Console.WriteLine("Unable to retrieve a connected display device. Exiting...");
+    Console.WriteLine("ESP32 Ip Not Found");
     Console.ReadLine();
     return;
 }
-
-Console.WriteLine("Successfully opened serial port with port name {0}", serialPort.PortName);
 
 while (true)
 {
@@ -159,27 +174,59 @@ while (true)
     int gpuTemp = GetGPUTemp(gpu);
 
     // Console.WriteLine("Retrieved cpu temp:{0} and gpu temp:{1}", cpuTemp, gpuTemp);
+    string payload = createPayload(cpuTemp, gpuTemp);
 
-    WriteToSerial(serialPort, cpuTemp, gpuTemp);
+    // WriteToSerial(serialPort, payload);
+    Console.WriteLine($"Created payload {payload}");
+    await SendUdpMessage(udpClient, espIp, 4210, payload);
 
     Thread.Sleep(1000);
 }
 
-static void WriteToSerial(SerialPort serialPort, int cpuTemp, int gpuTemp)
+static async Task<string> FindEsp32Ip()
 {
-    String cpuStr = cpuTemp.ToString();
+    // look for service advertised by ESP32
+    var results = await ZeroconfResolver.ResolveAsync("_esp32udp._udp.local.");
+
+    Console.WriteLine($"results: {results}");
+
+    foreach (var host in results)
+    {
+        Console.WriteLine($"Found: {host.DisplayName} - {host.IPAddress}");
+        return host.IPAddress;   // return first device found
+    }
+
+    return null;
+}
+
+static async Task SendUdpMessage(UdpClient client, string ip, int port, string message)
+{
+    var data = Encoding.UTF8.GetBytes(message);
+    await client.SendAsync(data, data.Length, ip, port);
+
+    Console.WriteLine($"Sent '{message}' to {ip}:{port}");
+}
+
+static string createPayload(int cpuTemp, int gpuTemp)
+{
+    string cpuStr = cpuTemp.ToString();
     if (cpuTemp < 10)
     {
         cpuStr = "0" + cpuStr;
     }
 
-    String gpuStr = gpuTemp.ToString();
+    string gpuStr = gpuTemp.ToString();
     if (gpuTemp < 10)
     {
         gpuStr = "0" + gpuStr;
     }
 
-    serialPort.Write(cpuStr + ":" + gpuStr + "\n");
+    return cpuStr + ":" + gpuStr;
+}
+
+static void WriteToSerial(SerialPort serialPort, string payload)
+{
+    serialPort.Write(payload + "\n");
 }
 
 static Computer OpenComputer()

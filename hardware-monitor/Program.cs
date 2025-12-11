@@ -1,13 +1,6 @@
-﻿using System.Collections;
-using System.Diagnostics;
-using System.IO.Ports;
-using System.Reflection;
-using System.Net;
+﻿using System.Diagnostics;
 using System.Net.Sockets;
-using System.Text;
-using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.PawnIo;
-using Zeroconf;
 
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
@@ -27,128 +20,40 @@ if (!PawnIo.IsInstalled)
 }
 
 // Init sensor retriever which retrieves GPU and GPU instances
-SensorRetriever sensorRetriever = new SensorRetriever();
+SensorRetriever sensorRetriever = new();
 sensorRetriever.Init();
 
-// establish serial port
-string[] ports = SerialPort.GetPortNames();
-SerialPort? serialPort = null;
-if(ports.Length == 0)
-{
-    Console.WriteLine("No display device connected. Exiting...");
-    Console.ReadLine();
-    return;
-}
+// try to retrieve serial port
+SerialWriter serialWriter = new();
+bool serialAvailable = serialWriter.TryOpenPort();
+Console.WriteLine($"Is Serial Available: {serialAvailable}");
 
-if(ports.Length == 1)
-{
-    serialPort = new SerialPort(ports[0], 115200, Parity.None, 8, StopBits.One);
-} else
-{
-    // prompt user for which COM port to use
-    Console.WriteLine("Multiple COM ports detected. Please input the number of the COM port to use and press enter.");
-    int idx = 1;
-    foreach (string port in ports)
-    {
-        Console.WriteLine("{0}: COM Port: {1}", idx++, port);
-    }
-
-    int comPortSelected = -1;
-    while (comPortSelected == -1)
-    {
-        string? input = Console.ReadLine();
-        if (input != null)
-        {
-            try
-            {
-                int parsedVal = int.Parse(input);
-                if(parsedVal >= 1 && parsedVal <= ports.Length)
-                {
-                    comPortSelected = parsedVal - 1;
-                    serialPort = new SerialPort(ports[comPortSelected], 115200, Parity.None, 8, StopBits.One);
-                    Console.WriteLine("COM port {0} selected.", ports[comPortSelected]);
-                }
-            } catch(Exception)
-            {
-                continue;
-            }
-        }
-    }
-}
-
-// if(serialPort != null)
-// {
-//     try
-//     {
-//         serialPort.Open();
-//     }
-//     catch(Exception)
-//     {
-//         Console.WriteLine("Unable to open serial port with port name {0}", serialPort.PortName);
-//         Console.ReadLine();
-//         return;
-//     }
-    
-// } else
-// {
-//     Console.WriteLine("Unable to retrieve a connected display device. Exiting...");
-//     Console.ReadLine();
-//     return;
-// }
-
-// Console.WriteLine("Successfully opened serial port with port name {0}", serialPort.PortName);
-
-// establish udp connection
-UdpClient udpClient = new UdpClient();
-String espIp = await FindEsp32Ip();
-
-if(espIp == null)
-{
-    Console.WriteLine("ESP32 Ip Not Found");
-    Console.ReadLine();
-    return;
-}
+// try to retrieve udp port
+UdpSender udpSender = new("_esp32udp._udp.local.", "sensordisplay", "_esp32udp");
+bool udpAvailable = await udpSender.FindEsp32Ip();
+Console.WriteLine($"Is UDP Available: {udpAvailable}");
 
 while (true)
 {
-    // cpu = GetCPU(computer);
     int cpuTemp = sensorRetriever.GetCPUTemp();
-
-    // gpu = GetGPU(computer, HardwareType.GpuNvidia);
     int gpuTemp = sensorRetriever.GetGPUTemp();
 
-    // Console.WriteLine("Retrieved cpu temp:{0} and gpu temp:{1}", cpuTemp, gpuTemp);
     string payload = createPayload(cpuTemp, gpuTemp);
 
-    // WriteToSerial(serialPort, payload);
-    Console.WriteLine($"Created payload {payload}");
-    await SendUdpMessage(udpClient, espIp, 4210, payload);
-
-    Thread.Sleep(1000);
-}
-
-static async Task<string> FindEsp32Ip()
-{
-    // look for service advertised by ESP32
-    var results = await ZeroconfResolver.ResolveAsync("_esp32udp._udp.local.");
-
-    Console.WriteLine($"results: {results}");
-
-    foreach (var host in results)
+    // we prioritise sending over serial port
+    if (serialAvailable)
     {
-        Console.WriteLine($"Found: {host.DisplayName} - {host.IPAddress}");
-        return host.IPAddress;   // return first device found
+        Console.WriteLine($"Sending payload {payload} over serial");
+        serialWriter.SendMessage(payload);
+    }
+    else if(udpAvailable)
+    {
+        Console.WriteLine($"Sending payload {payload} over udp");
+        await udpSender.SendMessage(payload);
     }
 
-    return null;
-}
-
-static async Task SendUdpMessage(UdpClient client, string ip, int port, string message)
-{
-    var data = Encoding.UTF8.GetBytes(message);
-    await client.SendAsync(data, data.Length, ip, port);
-
-    Console.WriteLine($"Sent '{message}' to {ip}:{port}");
+    // send updates every second
+    Thread.Sleep(1000);
 }
 
 static string createPayload(int cpuTemp, int gpuTemp)
@@ -166,9 +71,4 @@ static string createPayload(int cpuTemp, int gpuTemp)
     }
 
     return cpuStr + ":" + gpuStr;
-}
-
-static void WriteToSerial(SerialPort serialPort, string payload)
-{
-    serialPort.Write(payload + "\n");
 }

@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics;
-using System.Net.Sockets;
 using LibreHardwareMonitor.PawnIo;
 
 // This application requires PawnIO to be installed
@@ -19,7 +18,7 @@ if (!PawnIo.IsInstalled)
     return;
 }
 
-// Init sensor retriever which retrieves GPU and GPU instances
+// Init sensor retriever which retrieves CPU and GPU instances
 SensorRetriever sensorRetriever = new();
 sensorRetriever.Init();
 

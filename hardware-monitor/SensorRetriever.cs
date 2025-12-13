@@ -31,7 +31,6 @@ public class SensorRetriever
         cpuTempSensor = GetCPUTempSensor();
 
         // GPU listing
-        // gpu = null;
         List<IHardware> gpuList = ListGPUs();
         if (gpuList.Count == 1)
         {
@@ -153,22 +152,7 @@ public class SensorRetriever
         }
 
         cpu.Update();
-        return (int)cpuTempSensor.Value;
-        // var sensors = cpu?.Sensors;
-        // foreach (ISensor sensor in sensors)
-        // {
-        //     if (sensor.SensorType == SensorType.Temperature)
-        //     {
-        //         if (sensor.Value.HasValue)
-        //         {
-        //             return (int)sensor.Value;
-        //         }
-
-        //         return 0;
-        //     }
-        // }
-
-        // return 0;
+        return (int)(cpuTempSensor.Value ?? 0);
     }
 
      private List<IHardware> ListGPUs()
@@ -227,21 +211,7 @@ public class SensorRetriever
         }
 
         gpu.Update();
-        return (int)gpuTempSensor.Value;
-        // foreach (ISensor sensor in hardware.Sensors)
-        // {
-        //     if (sensor.SensorType == SensorType.Temperature && sensor.Name.Contains("Core"))
-        //     {
-        //         if (sensor.Value.HasValue)
-        //         {
-        //             return (int)sensor.Value;
-        //         }
-
-        //         return 0;
-        //     }
-        // }
-
-        // return 0;
+        return (int)(gpuTempSensor.Value ?? 0);
     }
 }
 

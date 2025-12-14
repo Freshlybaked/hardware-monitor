@@ -4,7 +4,8 @@ using LibreHardwareMonitor.PawnIo;
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
 {
-    Console.WriteLine("PawnIO not installed. This console application requires PawnIO to be installed to run. Press enter to open the PawnIO website in your browser and terminate this application.");
+    Console.WriteLine("PawnIO not installed. This console application requires PawnIO to be installed to run.");
+    Console.WriteLine("Press enter to open the PawnIO website in your browser and terminate this application.");
     Console.ReadLine();
     String url = "https://pawnio.eu/";
     try

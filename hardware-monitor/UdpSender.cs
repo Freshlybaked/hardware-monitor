@@ -22,7 +22,7 @@ public class UdpSender
     public async Task<bool> FindEsp32Ip()
     {
         var results = await ZeroconfResolver.ResolveAsync(discoveryUrl);
-        if(results == null)
+        if(results == null || results.Count == 0)
         {
             Console.WriteLine("UdpSender::FindEsp32Ip::results is null");
             return false;

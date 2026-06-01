@@ -39,6 +39,7 @@ while (true)
     int gpuTemp = sensorRetriever.GetGPUTemp();
 
     string payload = createPayload(cpuTemp, gpuTemp);
+    Console.WriteLine($"Payload: {payload}");
 
     // we prioritise sending over serial port
     if (serialAvailable)

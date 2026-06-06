@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using LibreHardwareMonitor.PawnIo;
 
+
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
 {

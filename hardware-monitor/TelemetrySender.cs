@@ -5,33 +5,39 @@ using OpenTelemetry.Resources;
 
 public class TelemetrySender : IDisposable
 {
-    private static readonly Meter Meter = new("HardwareMonitor", "1.0.0");
-    private static readonly Gauge<int> CpuTempGauge = Meter.CreateGauge<int>("cpu.temperature", "C", "CPU temperature in celsius");
-    private static readonly Gauge<int> GpuTempGauge = Meter.CreateGauge<int>("gpu.temperature", "C", "GPU temperature in celsius");
+    private volatile int _lastCpuTemp;
+    private volatile int _lastGpuTemp;
 
-    private readonly MeterProvider meterProvider;
+    private readonly Meter _meter;
+    private readonly MeterProvider _meterProvider;
 
     public TelemetrySender()
     {
-        meterProvider = Sdk.CreateMeterProviderBuilder()
+        _meter = new Meter("HardwareMonitor", "1.0.0");
+        _meter.CreateObservableGauge("cpu.temperature", () => _lastCpuTemp, "C", "CPU temperature in celsius");
+        _meter.CreateObservableGauge("gpu.temperature", () => _lastGpuTemp, "C", "GPU temperature in celsius");
+
+        _meterProvider = Sdk.CreateMeterProviderBuilder()
             .ConfigureResource(r => r.AddService("hardware-monitor"))
             .AddMeter("HardwareMonitor")
-            .AddOtlpExporter(opts =>
+            .AddOtlpExporter((exporterOptions, readerOptions) =>
             {
-                opts.Endpoint = new Uri("http://localhost:4318");
-                opts.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
+                exporterOptions.Endpoint = new Uri("http://localhost:4318/v1/metrics");
+                exporterOptions.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
+                readerOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = 10_000;
             })
             .Build()!;
     }
 
     public void RecordTemperatures(int cpuTemp, int gpuTemp)
     {
-        CpuTempGauge.Record(cpuTemp);
-        GpuTempGauge.Record(gpuTemp);
+        _lastCpuTemp = cpuTemp;
+        _lastGpuTemp = gpuTemp;
     }
 
     public void Dispose()
     {
-        meterProvider.Dispose();
+        _meterProvider.Dispose();
+        _meter.Dispose();
     }
 }

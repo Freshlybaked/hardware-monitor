@@ -28,6 +28,10 @@ SerialWriter serialWriter = new();
 bool serialAvailable = serialWriter.TryOpenPort();
 Console.WriteLine($"Is Serial Available: {serialAvailable}");
 
+// init telemetry sender for Grafana Cloud via Alloy
+TelemetrySender telemetrySender = new();
+Console.WriteLine("Telemetry sender initialized (sending to Alloy on localhost:4318)");
+
 // try to retrieve udp port
 UdpSender udpSender = new("_esp32udp._udp.local.", "sensordisplay", "_esp32udp");
 bool udpAvailable = await udpSender.FindEsp32Ip();
@@ -37,6 +41,8 @@ while (true)
 {
     int cpuTemp = sensorRetriever.GetCPUTemp();
     int gpuTemp = sensorRetriever.GetGPUTemp();
+
+    telemetrySender.RecordTemperatures(cpuTemp, gpuTemp);
 
     string payload = createPayload(cpuTemp, gpuTemp);
     Console.WriteLine($"Payload: {payload}");

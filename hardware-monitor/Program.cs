@@ -19,8 +19,19 @@ if (!PawnIo.IsInstalled)
     return;
 }
 
+bool debugMode = doEnableDebugMode();
+ISensorRetriever sensorRetriever;
+
+if(debugMode)
+{
+    sensorRetriever = new DebugSensorRetriever();
+}
+else
+{
+    sensorRetriever = new SensorRetriever();
+}
+
 // Init sensor retriever which retrieves CPU and GPU instances
-SensorRetriever sensorRetriever = new();
 sensorRetriever.Init();
 
 // try to retrieve serial port
@@ -78,4 +89,36 @@ static string createPayload(int cpuTemp, int gpuTemp)
     }
 
     return cpuStr + ":" + gpuStr;
+}
+
+static bool doEnableDebugMode()
+{
+    string debugMode = "";
+    while (debugMode == "")
+    {
+        Console.WriteLine("Do you want to run in debug mode? 'y' for debug mode, 'n' for normal mode.");
+        string? input = Console.ReadLine();
+        if (input != null)
+        {
+            try
+            {
+                if (input.ToLower().StartsWith("y"))
+                {
+                    Console.WriteLine("Debug mode enabled");
+                    debugMode = "y";
+                }
+                else
+                {
+                    Console.WriteLine("Normal mode enabled");
+                    debugMode = "n";
+                }
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+        }
+    }
+
+    return debugMode == "y";
 }

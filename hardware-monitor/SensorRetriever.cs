@@ -1,7 +1,7 @@
 
 using LibreHardwareMonitor.Hardware;
 
-public class SensorRetriever
+public class SensorRetriever : ISensorRetriever
 {
     private Computer? computer = null;
     private IHardware? cpu = null;

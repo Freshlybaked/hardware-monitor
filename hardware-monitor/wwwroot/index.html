@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hardware Monitor</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a212b;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --cpu: #4ea1ff;
+      --gpu: #ff7a59;
+      --border: #2a3441;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 20px; }
+    .readouts { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      min-width: 150px;
+    }
+    .card .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .card .value { font-size: 40px; font-weight: 700; margin-top: 4px; }
+    .card .unit { font-size: 18px; color: var(--muted); font-weight: 400; }
+    .card.cpu .value { color: var(--cpu); }
+    .card.gpu .value { color: var(--gpu); }
+    .controls { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+    button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--cpu); }
+    button.active { background: var(--cpu); color: #fff; border-color: var(--cpu); }
+    .chart-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      height: 460px;
+    }
+    .status { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Hardware Monitor &mdash; CPU &amp; GPU Temperature</h1>
+
+  <div class="readouts">
+    <div class="card cpu">
+      <div class="label">CPU</div>
+      <div class="value"><span id="cpuNow">--</span><span class="unit">&deg;C</span></div>
+    </div>
+    <div class="card gpu">
+      <div class="label">GPU</div>
+      <div class="value"><span id="gpuNow">--</span><span class="unit">&deg;C</span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <span style="color:var(--muted);font-size:14px;margin-right:4px;">Window:</span>
+    <button data-window="1h" class="active">Last 1 hour</button>
+    <button data-window="24h">Last 24 hours</button>
+    <button data-window="7d">Last 7 days</button>
+  </div>
+
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+  <div class="status" id="status"></div>
+
+  <script src="/lib/chart.umd.min.js"></script>
+  <script>
+    const cpuNowEl = document.getElementById('cpuNow');
+    const gpuNowEl = document.getElementById('gpuNow');
+    const statusEl = document.getElementById('status');
+    let currentWindow = '1h';
+
+    // Format an epoch-ms tick depending on the selected window.
+    function formatTick(ms) {
+      const d = new Date(ms);
+      const pad = n => String(n).padStart(2, '0');
+      if (currentWindow === '7d') {
+        return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:00`;
+      }
+      if (currentWindow === '24h') {
+        return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    const chart = new Chart(document.getElementById('chart').getContext('2d'), {
+      type: 'line',
+      data: {
+        datasets: [
+          { label: 'CPU °C', data: [], borderColor: '#4ea1ff', backgroundColor: '#4ea1ff22',
+            borderWidth: 2, pointRadius: 0, tension: 0.25 },
+          { label: 'GPU °C', data: [], borderColor: '#ff7a59', backgroundColor: '#ff7a5922',
+            borderWidth: 2, pointRadius: 0, tension: 0.25 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: {
+              color: '#8b949e',
+              maxTicksLimit: 10,
+              callback: value => formatTick(value)
+            },
+            grid: { color: '#2a344155' }
+          },
+          y: {
+            title: { display: true, text: '°C', color: '#8b949e' },
+            ticks: { color: '#8b949e' },
+            grid: { color: '#2a344155' },
+            suggestedMin: 30,
+            suggestedMax: 90
+          }
+        },
+        plugins: {
+          legend: { labels: { color: '#e6edf3' } },
+          tooltip: {
+            callbacks: { title: items => items.length ? formatTick(items[0].parsed.x) : '' }
+          }
+        }
+      }
+    });
+
+    async function loadHistory() {
+      try {
+        const [cpuRes, gpuRes] = await Promise.all([
+          fetch(`/api/telemetry/history?metric=cpu_temp&window=${currentWindow}`),
+          fetch(`/api/telemetry/history?metric=gpu_temp&window=${currentWindow}`)
+        ]);
+        if (!cpuRes.ok || !gpuRes.ok) throw new Error('history request failed');
+        const cpu = await cpuRes.json();
+        const gpu = await gpuRes.json();
+        chart.data.datasets[0].data = cpu.map(p => ({ x: p.t, y: p.v }));
+        chart.data.datasets[1].data = gpu.map(p => ({ x: p.t, y: p.v }));
+        chart.update();
+        const count = cpu.length;
+        statusEl.textContent = count
+          ? `Showing ${count} points for the ${currentWindow} window. Last updated ${new Date().toLocaleTimeString()}.`
+          : `No data yet for the ${currentWindow} window. (Tip: POST /api/dev/seed?hours=24 to seed demo data.)`;
+      } catch (err) {
+        statusEl.textContent = 'Failed to load history: ' + err.message;
+      }
+    }
+
+    async function loadCurrent() {
+      try {
+        const res = await fetch('/api/telemetry/current');
+        if (!res.ok) return;
+        const data = await res.json();
+        cpuNowEl.textContent = data.cpu;
+        gpuNowEl.textContent = data.gpu;
+      } catch { /* transient; ignore */ }
+    }
+
+    document.querySelectorAll('.controls button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentWindow = btn.dataset.window;
+        loadHistory();
+      });
+    });
+
+    // Live readout once per second; history refresh every 10 seconds.
+    loadCurrent();
+    loadHistory();
+    setInterval(loadCurrent, 1000);
+    setInterval(loadHistory, 10000);
+  </script>
+</body>
+</html>

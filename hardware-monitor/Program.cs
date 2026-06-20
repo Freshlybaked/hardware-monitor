@@ -1,5 +1,12 @@
 ﻿using System.Diagnostics;
+using hardware_monitor.Web;
 using LibreHardwareMonitor.PawnIo;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
@@ -19,10 +26,15 @@ if (!PawnIo.IsInstalled)
     return;
 }
 
+// ---------------------------------------------------------------------------
+// Interactive startup (unchanged): pick mode, sensors, display transport.
+// These prompts must run on the console before the web host takes over.
+// ---------------------------------------------------------------------------
+
 bool debugMode = doEnableDebugMode();
 ISensorRetriever sensorRetriever;
 
-if(debugMode)
+if (debugMode)
 {
     sensorRetriever = new DebugSensorRetriever();
 }
@@ -40,55 +52,72 @@ bool serialAvailable = serialWriter.TryOpenPort();
 Console.WriteLine($"Is Serial Available: {serialAvailable}");
 
 // init telemetry sender for Grafana Cloud via Alloy
-TelemetrySender telemetrySender = new();
-Console.WriteLine("Telemetry sender initialized (sending to Alloy on localhost:4318)");
+// TelemetrySender telemetrySender = new();
+// Console.WriteLine("Telemetry sender initialized (sending to Alloy on localhost:4318)");
 
 // try to retrieve udp port
 UdpSender udpSender = new("_esp32udp._udp.local.", "sensordisplay", "_esp32udp");
 bool udpAvailable = await udpSender.FindEsp32Ip();
 Console.WriteLine($"Is UDP Available: {udpAvailable}");
 
-while (true)
+// ---------------------------------------------------------------------------
+// Build the single in-process host: sampling loop + persistence + web API.
+// ---------------------------------------------------------------------------
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Bind the "HardwareMonitor" config section.
+builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection(MonitorOptions.SectionName));
+var options = builder.Configuration.GetSection(MonitorOptions.SectionName).Get<MonitorOptions>() ?? new MonitorOptions();
+
+// Bind Kestrel to localhost only (the configured URL uses 'localhost').
+builder.WebHost.UseUrls(options.WebUrl);
+
+// Share the already-initialized objects with the hosted services / API.
+builder.Services.AddSingleton(sensorRetriever);
+builder.Services.AddSingleton(serialWriter);
+builder.Services.AddSingleton(udpSender);
+// builder.Services.AddSingleton(telemetrySender);
+builder.Services.AddSingleton<LatestReadings>();
+
+// SQLite repository (logger injected by the container).
+builder.Services.AddSingleton(sp => new TelemetryRepository(
+    options.DatabasePath,
+    sp.GetRequiredService<ILogger<TelemetryRepository>>()));
+
+// Sampling loop carries the startup-determined transport availability flags.
+builder.Services.AddHostedService(sp => new SamplingService(
+    sp.GetRequiredService<ISensorRetriever>(),
+    sp.GetRequiredService<SerialWriter>(),
+    serialAvailable,
+    sp.GetRequiredService<UdpSender>(),
+    udpAvailable,
+    // sp.GetRequiredService<TelemetrySender>(),
+    sp.GetRequiredService<LatestReadings>(),
+    sp.GetRequiredService<ILogger<SamplingService>>()));
+
+builder.Services.AddHostedService<PersistenceService>();
+
+var app = builder.Build();
+
+// Create schema + enable WAL before anything reads/writes.
+app.Services.GetRequiredService<TelemetryRepository>().Initialize();
+
+// Serve the dashboard (wwwroot/index.html) and the JSON API.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.MapTelemetryApi();
+
+Console.WriteLine($"Web dashboard available at {options.WebUrl}");
+
+try
 {
-    int cpuTemp = sensorRetriever.GetCPUTemp();
-    int gpuTemp = sensorRetriever.GetGPUTemp();
-
-    telemetrySender.RecordTemperatures(cpuTemp, gpuTemp);
-
-    string payload = createPayload(cpuTemp, gpuTemp);
-    Console.WriteLine($"Payload: {payload}");
-
-    // we prioritise sending over serial port
-    if (serialAvailable)
-    {
-        Console.WriteLine($"Sending payload {payload} over serial");
-        serialWriter.SendMessage(payload);
-    }
-    else if(udpAvailable)
-    {
-        Console.WriteLine($"Sending payload {payload} over udp");
-        await udpSender.SendMessage(payload);
-    }
-
-    // send updates every second
-    Thread.Sleep(1000);
+    app.Run();
 }
-
-static string createPayload(int cpuTemp, int gpuTemp)
+finally
 {
-    string cpuStr = cpuTemp.ToString();
-    if (cpuTemp < 10)
-    {
-        cpuStr = "0" + cpuStr;
-    }
-
-    string gpuStr = gpuTemp.ToString();
-    if (gpuTemp < 10)
-    {
-        gpuStr = "0" + gpuStr;
-    }
-
-    return cpuStr + ":" + gpuStr;
+    // Flush the final OpenTelemetry export on shutdown.
+    // telemetrySender.Dispose();
 }
 
 static bool doEnableDebugMode()

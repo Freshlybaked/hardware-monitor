@@ -6,6 +6,10 @@ public class SerialWriter
 
     readonly int baudRate = 115200;
 
+    // Both the 1 Hz sampling loop and the web config endpoint write to this port from different
+    // threads; serialize writes so payloads can't interleave on the wire.
+    readonly object _writeLock = new();
+
     public SerialWriter()
     {
         
@@ -90,6 +94,9 @@ public class SerialWriter
             return;
         }
 
-        serialPort.Write(payload + "\n");
+        lock (_writeLock)
+        {
+            serialPort.Write(payload + "\n");
+        }
     }
 }

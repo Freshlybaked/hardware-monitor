@@ -13,29 +13,20 @@ namespace hardware_monitor.Web;
 public class SamplingService : BackgroundService
 {
     private readonly ISensorRetriever _sensors;
-    private readonly SerialWriter _serial;
-    private readonly bool _serialAvailable;
-    private readonly UdpSender _udp;
-    private readonly bool _udpAvailable;
+    private readonly DisplaySender _display;
     // private readonly TelemetrySender _telemetry;
     private readonly LatestReadings _latest;
     private readonly ILogger<SamplingService> _logger;
 
     public SamplingService(
         ISensorRetriever sensors,
-        SerialWriter serial,
-        bool serialAvailable,
-        UdpSender udp,
-        bool udpAvailable,
+        DisplaySender display,
         // TelemetrySender telemetry,
         LatestReadings latest,
         ILogger<SamplingService> logger)
     {
         _sensors = sensors;
-        _serial = serial;
-        _serialAvailable = serialAvailable;
-        _udp = udp;
-        _udpAvailable = udpAvailable;
+        _display = display;
         // _telemetry = telemetry;
         _latest = latest;
         _logger = logger;
@@ -72,17 +63,7 @@ public class SamplingService : BackgroundService
             string payload = CreatePayload(cpuTemp, gpuTemp, ramUsed, downMbps, upMbps, drives);
             Console.WriteLine($"Payload: {payload}");
 
-            // we prioritise sending over serial port
-            if (_serialAvailable)
-            {
-                Console.WriteLine($"Sending payload {payload} over serial");
-                _serial.SendMessage(payload);
-            }
-            else if (_udpAvailable)
-            {
-                Console.WriteLine($"Sending payload {payload} over udp");
-                await _udp.SendMessage(payload);
-            }
+            await _display.SendAsync(payload);
 
             // send updates every second
             try
@@ -99,8 +80,9 @@ public class SamplingService : BackgroundService
     }
 
     /// <summary>
-    /// Builds the versioned JSON line sent to the display, e.g.
-    /// {"v":1,"cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}.
+    /// Builds the versioned JSON telemetry line sent to the display, e.g.
+    /// {"v":1,"t":"data","cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}.
+    /// The "t" field marks this as telemetry ("data") vs the threshold ("cfg") line.
     /// Self-describing so the firmware reads only the keys it renders; "disk" carries one key per
     /// tracked drive. No trailing newline — SerialWriter adds "\n", UDP frames per datagram.
     /// </summary>
@@ -111,6 +93,7 @@ public class SamplingService : BackgroundService
         var payload = new
         {
             v = 1,
+            t = "data",
             cpu,
             gpu,
             ram,

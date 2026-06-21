@@ -44,19 +44,28 @@ App (OTel SDK) → Grafana Alloy (localhost:4318/v1/metrics) → Grafana Cloud
 
 ## Payload Format
 
-The payload sent to the ESP32 display (over serial and UDP) is a **versioned JSON object, one per line** — self-describing so the firmware reads only the keys it renders and ignores the rest:
+Messages sent to the ESP32 display (over serial and UDP) are **versioned JSON objects, one per line** — self-describing so the firmware reads only the keys it renders and ignores the rest. A `t` ("type") field distinguishes the two message kinds the firmware must handle.
+
+**Telemetry (`t":"data"`)** — emitted every second by the sampling loop:
 
 ```json
-{"v":1,"cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}
+{"v":1,"t":"data","cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}
 ```
 
 - `v` — schema version (bump on any breaking change)
+- `t` — message type: `"data"` for telemetry, `"cfg"` for thresholds
 - `cpu`, `gpu` — integers, °C
 - `ram` — number, % used
 - `net.dn`, `net.up` — numbers, Mbps (active adapter)
 - `disk` — object keyed by drive letter → % used; one key per tracked drive (see `Drives` in appsettings), so the count varies
 
-Built in `SamplingService.CreatePayload` via `System.Text.Json`. The string carries no trailing newline — `SerialWriter` appends `"\n"`, and UDP frames per datagram. (Previously the format was `"CC:GG"`, two zero-padded integers; replaced because it couldn't represent the added metrics or a variable number of drives.)
+**Threshold config (`t":"cfg"`)** — sent once at startup and again whenever the user saves on the web config page. Carries the CPU/GPU temperature alert limits (°C) the display should warn at:
+
+```json
+{"v":1,"t":"cfg","cpu":80,"gpu":75}
+```
+
+Telemetry is built in `SamplingService.CreatePayload`; the config line in `Thresholds.ToConfigPayload`. Both use `System.Text.Json` and are sent through `Web/DisplaySender` (serial preferred, else UDP). The string carries no trailing newline — `SerialWriter` appends `"\n"`, and UDP frames per datagram. (Previously the telemetry format was `"CC:GG"`, two zero-padded integers; replaced because it couldn't represent the added metrics or a variable number of drives.)
 
 ## Key Dependencies
 

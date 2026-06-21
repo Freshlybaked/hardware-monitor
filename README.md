@@ -22,7 +22,9 @@ account, no internet.
 | Persistence + retention | `Web/PersistenceService.cs` | `BackgroundService` that writes a row per metric every 5 s (configurable) and prunes rows older than the retention window on startup + once/day. |
 | JSON API | `Web/TelemetryApi.cs` | Minimal-API endpoints with query validation. |
 | Config | `Web/MonitorOptions.cs`, `appsettings.json` | Strongly-typed settings. |
-| Dashboard | `wwwroot/index.html`, `wwwroot/lib/chart.umd.min.js` | Single static page, Chart.js bundled locally (no CDN). |
+| Dashboard | `wwwroot/index.html`, `wwwroot/lib/chart.umd.min.js` | Dashboard page (with chart + live readout), Chart.js bundled locally (no CDN). |
+| Config page | `wwwroot/config.html` | Second page for setting CPU/GPU temperature alert thresholds. |
+| Thresholds | `Web/Thresholds.cs`, `Web/DisplaySender.cs` | Threshold record + `cfg` payload builder; single serial/UDP send path shared by the loop and the config endpoint. |
 | Host wiring | `Program.cs` | Interactive startup unchanged; afterwards builds one ASP.NET Core host (Kestrel, localhost only) that runs the background services and serves the API + dashboard. |
 
 The existing sensor/serial/UDP/telemetry classes (`SensorRetriever`, `SerialWriter`, `UdpSender`,
@@ -43,14 +45,19 @@ The existing sensor/serial/UDP/telemetry classes (`SensorRetriever`, `SerialWrit
 CREATE TABLE IF NOT EXISTS Readings(
     Id           INTEGER PRIMARY KEY,
     TimestampUtc INTEGER NOT NULL,   -- Unix epoch milliseconds, UTC
-    Metric       TEXT    NOT NULL,   -- 'cpu_temp' | 'gpu_temp'
+    Metric       TEXT    NOT NULL,   -- e.g. 'cpu_temp', 'gpu_temp', 'ram_used_pct', 'disk_used_pct_c'
     Value        REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_readings_metric_time ON Readings(Metric, TimestampUtc);
+
+CREATE TABLE IF NOT EXISTS Settings(   -- key/value config (e.g. alert thresholds)
+    Key   TEXT PRIMARY KEY,
+    Value TEXT NOT NULL
+);
 ```
 
-Narrow/long form so more metrics can be added later without a schema change. Only `cpu_temp` and
-`gpu_temp` are populated for now.
+`Readings` is narrow/long form so more metrics can be added without a schema change. `Settings`
+holds the saved CPU/GPU temperature alert thresholds (`threshold_cpu_temp`, `threshold_gpu_temp`).
 
 ### HTTP API
 
@@ -59,6 +66,8 @@ Narrow/long form so more metrics can be added later without a schema change. Onl
 | `GET /api/telemetry/history?metric={cpu_temp\|gpu_temp}&window={1h\|24h\|7d}` | History as `[{ "t": <epoch ms>, "v": <value> }, ...]`. `1h` returns raw rows; `24h` is averaged **per minute** server-side (~1440 pts); `7d` is averaged per 10 minutes. Unknown metric/window → **400**. |
 | `GET /api/telemetry/current` | Latest reading: `{ "cpu": <int>, "gpu": <int>, "t": <epoch ms> }`. |
 | `POST /api/dev/seed?hours=24` | **Dev helper** — seeds synthetic per-minute history over the past N hours (1–168) so the 24h/7d charts can be demoed without waiting. Returns `{ "inserted": <n>, "hours": <n> }`. |
+| `GET /api/config/thresholds` | Current CPU/GPU temperature alert limits: `{ "cpu": <°C>, "gpu": <°C> }`. |
+| `POST /api/config/thresholds` | Body `{ "cpu": <°C>, "gpu": <°C> }`. Validates each is 30–120 °C (else **400**), saves to SQLite, and pushes a `cfg` line to the display. Returns `{ "cpu", "gpu", "sent" }` (`sent` = whether a display transport was available). |
 
 ### How to run
 
@@ -81,7 +90,7 @@ no real hardware churn), then open:
 ### How to verify each requirement
 
 1. **Samples at ~1 Hz, persists every ~5 s into a local `.db`:**
-   - Watch the console — a `Payload: {"v":1,"cpu":...}` JSON line prints every second.
+   - Watch the console — a `Payload: {"v":1,"t":"data","cpu":...}` JSON line prints every second.
    - A `hardware-monitor.db` file appears next to the working directory; alongside it `-wal`/`-shm`
      files confirm WAL mode is active.
    - Hit `GET /api/telemetry/current` repeatedly — `t` advances ~every second.
@@ -106,7 +115,13 @@ no real hardware churn), then open:
    - On startup the pruner deletes rows older than the window (logged as
      `Pruned N readings older than ...`); the `7d` chart then shows only the retained tail.
 
-5. **Serial/display transport behaviour:**
+5. **Alert thresholds (config page → display):**
+   - From the dashboard, click **Configure alert thresholds**, set CPU/GPU limits, and **Save**.
+   - The console emits a single `{"v":1,"t":"cfg","cpu":...,"gpu":...}` line on save (and once at
+     startup). Reloading the config page shows the saved values (persisted in the `Settings` table).
+   - On the dashboard with the **Temperature** metric selected, dashed CPU/GPU limit lines appear.
+
+6. **Serial/display transport behaviour:**
    - With the ESP32 connected, the display still updates every second; serial is still preferred over
      UDP. The payload is now a versioned JSON line (see "Payload Format" in `CLAUDE.md`) carrying all
      metrics including per-drive disk usage — the ESP32 firmware must be updated to parse it.

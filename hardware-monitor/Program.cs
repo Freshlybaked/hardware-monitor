@@ -89,18 +89,22 @@ builder.Services.AddSingleton(catalog);
 // builder.Services.AddSingleton(telemetrySender);
 builder.Services.AddSingleton<LatestReadings>();
 
+// Single send path to the display (serial preferred, else UDP), shared by the sampling loop and
+// the config endpoint. Carries the startup-determined transport availability flags.
+builder.Services.AddSingleton(sp => new DisplaySender(
+    serialWriter, serialAvailable,
+    udpSender, udpAvailable,
+    sp.GetRequiredService<ILogger<DisplaySender>>()));
+
 // SQLite repository (logger injected by the container).
 builder.Services.AddSingleton(sp => new TelemetryRepository(
     options.DatabasePath,
     sp.GetRequiredService<ILogger<TelemetryRepository>>()));
 
-// Sampling loop carries the startup-determined transport availability flags.
+// Sampling loop sends via the shared DisplaySender.
 builder.Services.AddHostedService(sp => new SamplingService(
     sp.GetRequiredService<ISensorRetriever>(),
-    sp.GetRequiredService<SerialWriter>(),
-    serialAvailable,
-    sp.GetRequiredService<UdpSender>(),
-    udpAvailable,
+    sp.GetRequiredService<DisplaySender>(),
     // sp.GetRequiredService<TelemetrySender>(),
     sp.GetRequiredService<LatestReadings>(),
     sp.GetRequiredService<ILogger<SamplingService>>()));
@@ -110,7 +114,15 @@ builder.Services.AddHostedService<PersistenceService>();
 var app = builder.Build();
 
 // Create schema + enable WAL before anything reads/writes.
-app.Services.GetRequiredService<TelemetryRepository>().Initialize();
+var repository = app.Services.GetRequiredService<TelemetryRepository>();
+repository.Initialize();
+
+// Push the current alert thresholds to the display once at startup so a freshly powered display
+// knows the limits immediately (falls back to the configured defaults until the user saves).
+var display = app.Services.GetRequiredService<DisplaySender>();
+var startupThresholds = repository.GetThresholds(new Thresholds(options.CpuTempThreshold, options.GpuTempThreshold));
+await display.SendAsync(startupThresholds.ToConfigPayload());
+Console.WriteLine($"Sent startup thresholds: {startupThresholds.ToConfigPayload()}");
 
 // Serve the dashboard (wwwroot/index.html) and the JSON API.
 app.UseDefaultFiles();

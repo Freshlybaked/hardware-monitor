@@ -21,7 +21,10 @@
       color: var(--text);
       padding: 24px;
     }
-    h1 { font-size: 20px; font-weight: 600; margin: 0 0 20px; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+    .nav { margin-bottom: 20px; }
+    .nav a { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .nav a:hover { text-decoration: underline; }
     .readouts { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
     .card {
       background: var(--panel);
@@ -59,6 +62,7 @@
 </head>
 <body>
   <h1>Hardware Monitor</h1>
+  <div class="nav"><a href="/config.html">Configure alert thresholds &rarr;</a></div>
 
   <div class="readouts" id="readouts"></div>
 
@@ -89,6 +93,7 @@
     let currentGroup = null;         // selected group object
     let currentWindow = '1h';
     let chart = null;
+    let thresholds = null;           // { cpu, gpu } alert limits, shown on the temperature chart
 
     function formatTick(ms) {
       const d = new Date(ms);
@@ -101,6 +106,9 @@
     async function init() {
       const res = await fetch('/api/telemetry/metrics');
       groups = await res.json();
+
+      try { thresholds = await (await fetch('/api/config/thresholds')).json(); }
+      catch { thresholds = null; }
 
       // Build readout cards + colour/unit lookup, and the group selector.
       let colorIdx = 0;
@@ -164,6 +172,12 @@
         _metric: s.metric
       }));
 
+      // On the temperature chart, overlay dashed horizontal lines at the configured alert limits.
+      if (currentGroup.key === 'temp' && thresholds) {
+        datasets.push(makeLimitDataset('CPU limit', thresholds.cpu, '#4ea1ff'));
+        datasets.push(makeLimitDataset('GPU limit', thresholds.gpu, '#ff7a59'));
+      }
+
       if (chart) chart.destroy();
       chart = new Chart(document.getElementById('chart').getContext('2d'), {
         type: 'line',
@@ -184,6 +198,18 @@
       });
     }
 
+    // A dashed, flat horizontal line marking an alert limit; its two points span the data range,
+    // filled in by loadHistory once the x-extent is known.
+    function makeLimitDataset(label, value, color) {
+      return {
+        label: `${label} (${value}°C)`,
+        data: [],
+        borderColor: color, borderWidth: 1.5, borderDash: [6, 6],
+        pointRadius: 0, tension: 0, fill: false,
+        _limit: value
+      };
+    }
+
     async function loadHistory() {
       if (!currentGroup) return;
       try {
@@ -193,10 +219,19 @@
             return r.json();
           })
         ));
-        let total = 0;
-        chart.data.datasets.forEach((ds, i) => {
+        let total = 0, minX = Infinity, maxX = -Infinity;
+        currentGroup.series.forEach((s, i) => {
+          const ds = chart.data.datasets.find(d => d._metric === s.metric);
           ds.data = results[i].map(p => ({ x: p.t, y: p.v }));
           total += results[i].length;
+          if (results[i].length) {
+            minX = Math.min(minX, results[i][0].t);
+            maxX = Math.max(maxX, results[i][results[i].length - 1].t);
+          }
+        });
+        // Stretch the limit lines across the loaded range (or hide them if there's no data yet).
+        chart.data.datasets.filter(d => d._limit != null).forEach(d => {
+          d.data = isFinite(minX) ? [{ x: minX, y: d._limit }, { x: maxX, y: d._limit }] : [];
         });
         chart.update();
         statusEl.textContent = total

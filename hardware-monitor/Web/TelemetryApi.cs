@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
 
 namespace hardware_monitor.Web;
 
@@ -46,7 +47,36 @@ public static class TelemetryApi
             int inserted = repo.SeedSynthetic(h, catalog.ValidMetrics);
             return Results.Json(new { inserted, hours = h });
         });
+
+        // GET /api/config/thresholds  -> the currently saved CPU/GPU temperature alert limits
+        app.MapGet("/api/config/thresholds", (TelemetryRepository repo, IOptions<MonitorOptions> options) =>
+        {
+            var defaults = new Thresholds(options.Value.CpuTempThreshold, options.Value.GpuTempThreshold);
+            var thresholds = repo.GetThresholds(defaults);
+            return Results.Json(new { cpu = thresholds.Cpu, gpu = thresholds.Gpu });
+        });
+
+        // POST /api/config/thresholds  -> validate, persist, and push the new limits to the display
+        app.MapPost("/api/config/thresholds", async (ThresholdUpdate body, TelemetryRepository repo, DisplaySender display) =>
+        {
+            if (!IsValidThreshold(body.Cpu) || !IsValidThreshold(body.Gpu))
+            {
+                return Results.BadRequest(new { error = "CPU and GPU thresholds must be numbers between 30 and 120 (°C)." });
+            }
+
+            var thresholds = new Thresholds(body.Cpu, body.Gpu);
+            repo.SaveThresholds(thresholds);
+            bool sent = await display.SendAsync(thresholds.ToConfigPayload());
+            return Results.Json(new { cpu = thresholds.Cpu, gpu = thresholds.Gpu, sent });
+        });
     }
+
+    /// <summary>Body of POST /api/config/thresholds (JSON, e.g. {"cpu":80,"gpu":75}).</summary>
+    public record ThresholdUpdate(double Cpu, double Gpu);
+
+    /// <summary>A threshold must be a real, finite temperature within a sane range.</summary>
+    private static bool IsValidThreshold(double value) =>
+        double.IsFinite(value) && value >= 30 && value <= 120;
 
     /// <summary>
     /// Maps a window token to its duration and downsample bucket size (0 = return raw rows).

@@ -57,6 +57,10 @@ public class TelemetryRepository
             );
             CREATE INDEX IF NOT EXISTS ix_readings_metric_time
                 ON Readings(Metric, TimestampUtc);
+            CREATE TABLE IF NOT EXISTS Settings(
+                Key   TEXT PRIMARY KEY,
+                Value TEXT NOT NULL
+            );
             """;
         command.ExecuteNonQuery();
         _logger.LogInformation("SQLite store initialized (WAL) at {ConnectionString}", _connectionString);
@@ -170,6 +174,75 @@ public class TelemetryRepository
         {
             _logger.LogError(ex, "Failed to prune old readings");
             return 0;
+        }
+    }
+
+    private const string CpuThresholdKey = "threshold_cpu_temp";
+    private const string GpuThresholdKey = "threshold_gpu_temp";
+
+    /// <summary>
+    /// Reads the saved alert thresholds, falling back to <paramref name="defaults"/> for any value
+    /// that has never been saved (or if the read fails).
+    /// </summary>
+    public Thresholds GetThresholds(Thresholds defaults)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Key, Value FROM Settings WHERE Key IN ($cpu, $gpu);";
+            command.Parameters.AddWithValue("$cpu", CpuThresholdKey);
+            command.Parameters.AddWithValue("$gpu", GpuThresholdKey);
+
+            double cpu = defaults.Cpu, gpu = defaults.Gpu;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                string key = reader.GetString(0);
+                if (double.TryParse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture, out double value))
+                {
+                    if (key == CpuThresholdKey) cpu = value;
+                    else if (key == GpuThresholdKey) gpu = value;
+                }
+            }
+            return new Thresholds(cpu, gpu);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read thresholds; using defaults");
+            return defaults;
+        }
+    }
+
+    /// <summary>Upserts the alert thresholds. Failures are logged and swallowed.</summary>
+    public void SaveThresholds(Thresholds thresholds)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO Settings (Key, Value) VALUES ($key, $value)
+                ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value;
+                """;
+            var keyParam = command.Parameters.Add("$key", SqliteType.Text);
+            var valueParam = command.Parameters.Add("$value", SqliteType.Text);
+
+            keyParam.Value = CpuThresholdKey;
+            valueParam.Value = thresholds.Cpu.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            command.ExecuteNonQuery();
+
+            keyParam.Value = GpuThresholdKey;
+            valueParam.Value = thresholds.Gpu.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            command.ExecuteNonQuery();
+
+            transaction.Commit();
+            _logger.LogInformation("Saved thresholds cpu={Cpu} gpu={Gpu}", thresholds.Cpu, thresholds.Gpu);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save thresholds");
         }
     }
 

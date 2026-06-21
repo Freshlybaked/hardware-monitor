@@ -19,6 +19,12 @@ public class MonitorOptions
     /// <summary>Drives to track capacity for, e.g. ["C:", "D:"]. Empty = the system drive only.</summary>
     public string[] Drives { get; set; } = Array.Empty<string>();
 
+    /// <summary>Default CPU temperature alert limit (°C), used until the user saves one.</summary>
+    public double CpuTempThreshold { get; set; } = 80;
+
+    /// <summary>Default GPU temperature alert limit (°C), used until the user saves one.</summary>
+    public double GpuTempThreshold { get; set; } = 75;
+
     /// <summary>Kestrel bind URL. Must be localhost-only.</summary>
     public string WebUrl { get; set; } = "http://localhost:5005";
 }

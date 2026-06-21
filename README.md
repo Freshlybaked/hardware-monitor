@@ -81,7 +81,7 @@ no real hardware churn), then open:
 ### How to verify each requirement
 
 1. **Samples at ~1 Hz, persists every ~5 s into a local `.db`:**
-   - Watch the console — a `Payload: CC:GG` line prints every second (unchanged behaviour).
+   - Watch the console — a `Payload: {"v":1,"cpu":...}` JSON line prints every second.
    - A `hardware-monitor.db` file appears next to the working directory; alongside it `-wal`/`-shm`
      files confirm WAL mode is active.
    - Hit `GET /api/telemetry/current` repeatedly — `t` advances ~every second.
@@ -106,10 +106,10 @@ no real hardware churn), then open:
    - On startup the pruner deletes rows older than the window (logged as
      `Pruned N readings older than ...`); the `7d` chart then shows only the retained tail.
 
-5. **Existing serial/display behaviour unchanged:**
-   - With the ESP32 connected, the display still updates every second from the same `"CC:GG"` payload;
-     serial is still preferred over UDP. None of the original sensor/serial/UDP/telemetry classes were
-     touched.
+5. **Serial/display transport behaviour:**
+   - With the ESP32 connected, the display still updates every second; serial is still preferred over
+     UDP. The payload is now a versioned JSON line (see "Payload Format" in `CLAUDE.md`) carrying all
+     metrics including per-drive disk usage — the ESP32 firmware must be updated to parse it.
 
 ### Validation examples (should return 400)
 

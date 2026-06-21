@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -68,7 +69,7 @@ public class SamplingService : BackgroundService
             // _telemetry.RecordTemperatures(cpuTemp, gpuTemp);
             _latest.Update(readings);
 
-            string payload = CreatePayload(cpuTemp, gpuTemp);
+            string payload = CreatePayload(cpuTemp, gpuTemp, ramUsed, downMbps, upMbps, drives);
             Console.WriteLine($"Payload: {payload}");
 
             // we prioritise sending over serial port
@@ -97,20 +98,25 @@ public class SamplingService : BackgroundService
         _logger.LogInformation("Sampling loop stopped");
     }
 
-    private static string CreatePayload(int cpuTemp, int gpuTemp)
+    /// <summary>
+    /// Builds the versioned JSON line sent to the display, e.g.
+    /// {"v":1,"cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}.
+    /// Self-describing so the firmware reads only the keys it renders; "disk" carries one key per
+    /// tracked drive. No trailing newline — SerialWriter adds "\n", UDP frames per datagram.
+    /// </summary>
+    private static string CreatePayload(int cpu, int gpu, double ram,
+                                        double netDn, double netUp,
+                                        IReadOnlyList<DriveUsage> drives)
     {
-        string cpuStr = cpuTemp.ToString();
-        if (cpuTemp < 10)
+        var payload = new
         {
-            cpuStr = "0" + cpuStr;
-        }
-
-        string gpuStr = gpuTemp.ToString();
-        if (gpuTemp < 10)
-        {
-            gpuStr = "0" + gpuStr;
-        }
-
-        return cpuStr + ":" + gpuStr;
+            v = 1,
+            cpu,
+            gpu,
+            ram,
+            net = new { dn = netDn, up = netUp },
+            disk = drives.ToDictionary(d => d.Letter, d => d.UsedPercent),
+        };
+        return JsonSerializer.Serialize(payload);
     }
 }

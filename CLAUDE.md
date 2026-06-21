@@ -44,7 +44,19 @@ App (OTel SDK) → Grafana Alloy (localhost:4318/v1/metrics) → Grafana Cloud
 
 ## Payload Format
 
-Temperature payload sent to the ESP32 display is `"CC:GG"` where CC and GG are zero-padded two-digit integers (e.g., `"53:48"`).
+The payload sent to the ESP32 display (over serial and UDP) is a **versioned JSON object, one per line** — self-describing so the firmware reads only the keys it renders and ignores the rest:
+
+```json
+{"v":1,"cpu":53,"gpu":48,"ram":41,"net":{"dn":12.3,"up":0.4},"disk":{"C":38,"D":72.4}}
+```
+
+- `v` — schema version (bump on any breaking change)
+- `cpu`, `gpu` — integers, °C
+- `ram` — number, % used
+- `net.dn`, `net.up` — numbers, Mbps (active adapter)
+- `disk` — object keyed by drive letter → % used; one key per tracked drive (see `Drives` in appsettings), so the count varies
+
+Built in `SamplingService.CreatePayload` via `System.Text.Json`. The string carries no trailing newline — `SerialWriter` appends `"\n"`, and UDP frames per datagram. (Previously the format was `"CC:GG"`, two zero-padded integers; replaced because it couldn't represent the added metrics or a variable number of drives.)
 
 ## Key Dependencies
 

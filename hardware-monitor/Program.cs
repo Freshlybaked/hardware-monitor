@@ -27,6 +27,20 @@ if (!PawnIo.IsInstalled)
 }
 
 // ---------------------------------------------------------------------------
+// Configuration first, so the sensor retriever and metric catalog can be built
+// from the configured drive list before the interactive startup runs.
+// ---------------------------------------------------------------------------
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection(MonitorOptions.SectionName));
+var options = builder.Configuration.GetSection(MonitorOptions.SectionName).Get<MonitorOptions>() ?? new MonitorOptions();
+
+// Resolve the drives we'll track (defaults to the system drive) and build the metric catalog.
+var drives = StorageDrives.Resolve(options.Drives);
+var catalog = new MetricCatalog(drives.Select(StorageDrives.Letter));
+
+// ---------------------------------------------------------------------------
 // Interactive startup (unchanged): pick mode, sensors, display transport.
 // These prompts must run on the console before the web host takes over.
 // ---------------------------------------------------------------------------
@@ -36,11 +50,11 @@ ISensorRetriever sensorRetriever;
 
 if (debugMode)
 {
-    sensorRetriever = new DebugSensorRetriever();
+    sensorRetriever = new DebugSensorRetriever(drives);
 }
 else
 {
-    sensorRetriever = new SensorRetriever();
+    sensorRetriever = new SensorRetriever(drives);
 }
 
 // Init sensor retriever which retrieves CPU and GPU instances
@@ -64,12 +78,6 @@ Console.WriteLine($"Is UDP Available: {udpAvailable}");
 // Build the single in-process host: sampling loop + persistence + web API.
 // ---------------------------------------------------------------------------
 
-var builder = WebApplication.CreateBuilder(args);
-
-// Bind the "HardwareMonitor" config section.
-builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection(MonitorOptions.SectionName));
-var options = builder.Configuration.GetSection(MonitorOptions.SectionName).Get<MonitorOptions>() ?? new MonitorOptions();
-
 // Bind Kestrel to localhost only (the configured URL uses 'localhost').
 builder.WebHost.UseUrls(options.WebUrl);
 
@@ -77,6 +85,7 @@ builder.WebHost.UseUrls(options.WebUrl);
 builder.Services.AddSingleton(sensorRetriever);
 builder.Services.AddSingleton(serialWriter);
 builder.Services.AddSingleton(udpSender);
+builder.Services.AddSingleton(catalog);
 // builder.Services.AddSingleton(telemetrySender);
 builder.Services.AddSingleton<LatestReadings>();
 

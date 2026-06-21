@@ -16,6 +16,9 @@ public class MonitorOptions
     /// <summary>Rows older than this many days are pruned on startup and once per day.</summary>
     public int RetentionDays { get; set; } = 7;
 
+    /// <summary>Drives to track capacity for, e.g. ["C:", "D:"]. Empty = the system drive only.</summary>
+    public string[] Drives { get; set; } = Array.Empty<string>();
+
     /// <summary>Kestrel bind URL. Must be localhost-only.</summary>
     public string WebUrl { get; set; } = "http://localhost:5005";
 }

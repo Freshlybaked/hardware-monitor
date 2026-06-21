@@ -48,9 +48,25 @@ public class SamplingService : BackgroundService
         {
             int cpuTemp = _sensors.GetCPUTemp();
             int gpuTemp = _sensors.GetGPUTemp();
+            double ramUsed = _sensors.GetRamUsedPercent();
+            var (downMbps, upMbps) = _sensors.GetNetworkThroughput();
+            IReadOnlyList<DriveUsage> drives = _sensors.GetStorageUsage();
+
+            var readings = new Dictionary<string, double>
+            {
+                [Metrics.CpuTemp] = cpuTemp,
+                [Metrics.GpuTemp] = gpuTemp,
+                [Metrics.RamUsedPct] = ramUsed,
+                [Metrics.NetDownMbps] = downMbps,
+                [Metrics.NetUpMbps] = upMbps,
+            };
+            foreach (DriveUsage drive in drives)
+            {
+                readings[Metrics.DiskUsedPct(drive.Letter)] = drive.UsedPercent;
+            }
 
             // _telemetry.RecordTemperatures(cpuTemp, gpuTemp);
-            _latest.Update(cpuTemp, gpuTemp);
+            _latest.Update(readings);
 
             string payload = CreatePayload(cpuTemp, gpuTemp);
             Console.WriteLine($"Payload: {payload}");

@@ -14,10 +14,6 @@ public readonly record struct DataPoint(long T, double V);
 /// </summary>
 public class TelemetryRepository
 {
-    // Known metric names. The schema is generic, but only these two are populated for now.
-    public const string CpuMetric = "cpu_temp";
-    public const string GpuMetric = "gpu_temp";
-
     private readonly string _connectionString;
     private readonly ILogger<TelemetryRepository> _logger;
 
@@ -67,10 +63,12 @@ public class TelemetryRepository
     }
 
     /// <summary>
-    /// Persists one CPU and one GPU reading at the given timestamp. Failures are logged and swallowed.
+    /// Persists one row per supplied metric at the given timestamp. Failures are logged and swallowed.
     /// </summary>
-    public void InsertReadings(long timestampUtcMs, double cpuValue, double gpuValue)
+    public void InsertReadings(long timestampUtcMs, IReadOnlyDictionary<string, double> values)
     {
+        if (values.Count == 0) return;
+
         try
         {
             using var connection = OpenConnection();
@@ -85,14 +83,12 @@ public class TelemetryRepository
             var valueParam = command.Parameters.Add("$value", SqliteType.Real);
 
             tsParam.Value = timestampUtcMs;
-
-            metricParam.Value = CpuMetric;
-            valueParam.Value = cpuValue;
-            command.ExecuteNonQuery();
-
-            metricParam.Value = GpuMetric;
-            valueParam.Value = gpuValue;
-            command.ExecuteNonQuery();
+            foreach (var (metric, value) in values)
+            {
+                metricParam.Value = metric;
+                valueParam.Value = value;
+                command.ExecuteNonQuery();
+            }
 
             transaction.Commit();
         }
@@ -178,13 +174,15 @@ public class TelemetryRepository
     }
 
     /// <summary>
-    /// Dev helper: seeds synthetic CPU/GPU readings at one-minute spacing over the past
-    /// <paramref name="hours"/> hours so the 24h chart can be demonstrated without waiting.
+    /// Dev helper: seeds synthetic readings for the supplied metrics at one-minute spacing over the
+    /// past <paramref name="hours"/> hours so the charts can be demonstrated without waiting.
     /// Returns the number of rows inserted.
     /// </summary>
-    public int SeedSynthetic(int hours)
+    public int SeedSynthetic(int hours, IReadOnlyCollection<string> metrics)
     {
         int inserted = 0;
+        if (metrics.Count == 0) return 0;
+
         try
         {
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -205,20 +203,15 @@ public class TelemetryRepository
 
             for (long ts = startMs; ts <= nowMs; ts += stepMs)
             {
-                // Gentle sine-wave "gaming sessions" plus noise, distinct CPU/GPU baselines.
-                double phase = (ts - startMs) / 3_600_000.0; // hours elapsed
-                double cpu = 45 + 20 * Math.Max(0, Math.Sin(phase)) + random.NextDouble() * 4;
-                double gpu = 50 + 25 * Math.Max(0, Math.Sin(phase + 0.5)) + random.NextDouble() * 4;
-
+                double phaseHours = (ts - startMs) / 3_600_000.0; // hours elapsed
                 tsParam.Value = ts;
-                metricParam.Value = CpuMetric;
-                valueParam.Value = Math.Round(cpu, 1);
-                command.ExecuteNonQuery();
-
-                metricParam.Value = GpuMetric;
-                valueParam.Value = Math.Round(gpu, 1);
-                command.ExecuteNonQuery();
-                inserted += 2;
+                foreach (string metric in metrics)
+                {
+                    metricParam.Value = metric;
+                    valueParam.Value = SynthValue(metric, phaseHours, random);
+                    command.ExecuteNonQuery();
+                    inserted++;
+                }
             }
 
             transaction.Commit();
@@ -229,5 +222,21 @@ public class TelemetryRepository
             _logger.LogError(ex, "Failed to seed synthetic readings");
         }
         return inserted;
+    }
+
+    /// <summary>Produces a plausible value for a metric based on its name (sine "sessions" + noise).</summary>
+    private static double SynthValue(string metric, double phaseHours, Random rng)
+    {
+        if (metric.Contains("temp"))
+            return Math.Round(45 + 20 * Math.Max(0, Math.Sin(phaseHours)) + rng.NextDouble() * 4, 1);
+        if (metric.StartsWith("ram"))
+            return Math.Round(Math.Clamp(40 + 30 * Math.Max(0, Math.Sin(phaseHours + 0.5)) + rng.NextDouble() * 5, 0, 100), 1);
+        if (metric.StartsWith("net_down"))
+            return Math.Round(rng.NextDouble() < 0.3 ? rng.NextDouble() * 200 : rng.NextDouble() * 8, 2);
+        if (metric.StartsWith("net_up"))
+            return Math.Round(rng.NextDouble() * 5, 2);
+        if (metric.StartsWith("disk"))
+            return Math.Round(Math.Clamp(60 + 5 * Math.Sin(phaseHours / 24.0) + rng.NextDouble() * 0.5, 0, 100), 1);
+        return Math.Round(rng.NextDouble() * 100, 1);
     }
 }

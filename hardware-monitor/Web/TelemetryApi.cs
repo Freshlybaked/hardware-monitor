@@ -9,20 +9,17 @@ namespace hardware_monitor.Web;
 /// </summary>
 public static class TelemetryApi
 {
-    private static readonly HashSet<string> ValidMetrics = new()
-    {
-        TelemetryRepository.CpuMetric,
-        TelemetryRepository.GpuMetric
-    };
-
     public static void MapTelemetryApi(this WebApplication app)
     {
+        // GET /api/telemetry/metrics -> the catalog of groups/series the dashboard should render
+        app.MapGet("/api/telemetry/metrics", (MetricCatalog catalog) => Results.Json(catalog.Groups));
+
         // GET /api/telemetry/history?metric=cpu_temp&window=24h
-        app.MapGet("/api/telemetry/history", (string? metric, string? window, TelemetryRepository repo) =>
+        app.MapGet("/api/telemetry/history", (string? metric, string? window, MetricCatalog catalog, TelemetryRepository repo) =>
         {
-            if (metric is null || !ValidMetrics.Contains(metric))
+            if (metric is null || !catalog.ValidMetrics.Contains(metric))
             {
-                return Results.BadRequest(new { error = "Unknown or missing metric. Use 'cpu_temp' or 'gpu_temp'." });
+                return Results.BadRequest(new { error = $"Unknown or missing metric. Valid: {string.Join(", ", catalog.ValidMetrics)}." });
             }
 
             if (!TryResolveWindow(window, out long durationMs, out long bucketMs))
@@ -35,18 +32,18 @@ public static class TelemetryApi
             return Results.Json(points);
         });
 
-        // GET /api/telemetry/current  -> latest CPU & GPU temperature for the live readout
+        // GET /api/telemetry/current  -> latest value of every metric for the live readout
         app.MapGet("/api/telemetry/current", (LatestReadings latest) =>
         {
-            var (cpu, gpu, ts) = latest.Snapshot();
-            return Results.Json(new { cpu, gpu, t = ts });
+            var (values, ts) = latest.Snapshot();
+            return Results.Json(new { t = ts, values });
         });
 
         // POST /api/dev/seed?hours=24  -> dev helper to populate synthetic history for demos
-        app.MapPost("/api/dev/seed", (int? hours, TelemetryRepository repo) =>
+        app.MapPost("/api/dev/seed", (int? hours, MetricCatalog catalog, TelemetryRepository repo) =>
         {
             int h = hours is > 0 and <= 168 ? hours.Value : 24; // cap at 7 days
-            int inserted = repo.SeedSynthetic(h);
+            int inserted = repo.SeedSynthetic(h, catalog.ValidMetrics);
             return Results.Json(new { inserted, hours = h });
         });
     }

@@ -44,14 +44,14 @@ public class PersistenceService : BackgroundService
 
         while (await SafeWaitForNextTick(timer, stoppingToken))
         {
-            var (cpu, gpu, ts) = _latest.Snapshot();
-            if (ts == 0)
+            var (values, ts) = _latest.Snapshot();
+            if (ts == 0 || values.Count == 0)
             {
                 // No reading has been taken yet (sampling loop just started); skip this tick.
                 continue;
             }
 
-            _repository.InsertReadings(ts, cpu, gpu);
+            _repository.InsertReadings(ts, values);
 
             if (DateTime.UtcNow >= nextPruneUtc)
             {

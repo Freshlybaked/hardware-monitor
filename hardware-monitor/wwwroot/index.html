@@ -93,7 +93,7 @@
     let currentGroup = null;         // selected group object
     let currentWindow = '1h';
     let chart = null;
-    let thresholds = null;           // { cpu, gpu } alert limits, shown on the temperature chart
+    let thresholds = null;           // { cpu_warn, cpu_crit, gpu_warn, gpu_crit } limits, shown on the temp chart
 
     function formatTick(ms) {
       const d = new Date(ms);
@@ -172,10 +172,12 @@
         _metric: s.metric
       }));
 
-      // On the temperature chart, overlay dashed horizontal lines at the configured alert limits.
+      // On the temperature chart, overlay dashed horizontal lines at the configured warn/crit limits.
       if (currentGroup.key === 'temp' && thresholds) {
-        datasets.push(makeLimitDataset('CPU limit', thresholds.cpu, '#4ea1ff'));
-        datasets.push(makeLimitDataset('GPU limit', thresholds.gpu, '#ff7a59'));
+        datasets.push(makeLimitDataset('CPU warn', thresholds.cpu_warn, '#82aaff'));
+        datasets.push(makeLimitDataset('CPU crit', thresholds.cpu_crit, '#4ea1ff'));
+        datasets.push(makeLimitDataset('GPU warn', thresholds.gpu_warn, '#ffcb6b'));
+        datasets.push(makeLimitDataset('GPU crit', thresholds.gpu_crit, '#ff7a59'));
       }
 
       if (chart) chart.destroy();

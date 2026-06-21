@@ -23,7 +23,7 @@ account, no internet.
 | JSON API | `Web/TelemetryApi.cs` | Minimal-API endpoints with query validation. |
 | Config | `Web/MonitorOptions.cs`, `appsettings.json` | Strongly-typed settings. |
 | Dashboard | `wwwroot/index.html`, `wwwroot/lib/chart.umd.min.js` | Dashboard page (with chart + live readout), Chart.js bundled locally (no CDN). |
-| Config page | `wwwroot/config.html` | Second page for setting CPU/GPU temperature alert thresholds. |
+| Config page | `wwwroot/config.html` | Second page for setting CPU/GPU warning + critical temperature alert levels. |
 | Thresholds | `Web/Thresholds.cs`, `Web/DisplaySender.cs` | Threshold record + `cfg` payload builder; single serial/UDP send path shared by the loop and the config endpoint. |
 | Host wiring | `Program.cs` | Interactive startup unchanged; afterwards builds one ASP.NET Core host (Kestrel, localhost only) that runs the background services and serves the API + dashboard. |
 
@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS Settings(   -- key/value config (e.g. alert threshold
 ```
 
 `Readings` is narrow/long form so more metrics can be added without a schema change. `Settings`
-holds the saved CPU/GPU temperature alert thresholds (`threshold_cpu_temp`, `threshold_gpu_temp`).
+holds the saved CPU/GPU temperature alert levels — a warning and a critical level per component
+(`threshold_cpu_warn`, `threshold_cpu_crit`, `threshold_gpu_warn`, `threshold_gpu_crit`).
 
 ### HTTP API
 
@@ -66,8 +67,8 @@ holds the saved CPU/GPU temperature alert thresholds (`threshold_cpu_temp`, `thr
 | `GET /api/telemetry/history?metric={cpu_temp\|gpu_temp}&window={1h\|24h\|7d}` | History as `[{ "t": <epoch ms>, "v": <value> }, ...]`. `1h` returns raw rows; `24h` is averaged **per minute** server-side (~1440 pts); `7d` is averaged per 10 minutes. Unknown metric/window → **400**. |
 | `GET /api/telemetry/current` | Latest reading: `{ "cpu": <int>, "gpu": <int>, "t": <epoch ms> }`. |
 | `POST /api/dev/seed?hours=24` | **Dev helper** — seeds synthetic per-minute history over the past N hours (1–168) so the 24h/7d charts can be demoed without waiting. Returns `{ "inserted": <n>, "hours": <n> }`. |
-| `GET /api/config/thresholds` | Current CPU/GPU temperature alert limits: `{ "cpu": <°C>, "gpu": <°C> }`. |
-| `POST /api/config/thresholds` | Body `{ "cpu": <°C>, "gpu": <°C> }`. Validates each is 30–120 °C (else **400**), saves to SQLite, and pushes a `cfg` line to the display. Returns `{ "cpu", "gpu", "sent" }` (`sent` = whether a display transport was available). |
+| `GET /api/config/thresholds` | Current CPU/GPU warn+crit alert levels: `{ "cpu_warn", "cpu_crit", "gpu_warn", "gpu_crit" }` (°C). |
+| `POST /api/config/thresholds` | Body `{ "cpu_warn", "cpu_crit", "gpu_warn", "gpu_crit" }` (°C). Validates each is 30–120 °C and that each warning is below its critical (else **400**), saves to SQLite, and pushes a `cfg` line to the display. Returns the four values plus `"sent"` (whether a display transport was available). |
 
 ### How to run
 
@@ -116,10 +117,13 @@ no real hardware churn), then open:
      `Pruned N readings older than ...`); the `7d` chart then shows only the retained tail.
 
 5. **Alert thresholds (config page → display):**
-   - From the dashboard, click **Configure alert thresholds**, set CPU/GPU limits, and **Save**.
-   - The console emits a single `{"v":1,"t":"cfg","cpu":...,"gpu":...}` line on save (and once at
-     startup). Reloading the config page shows the saved values (persisted in the `Settings` table).
-   - On the dashboard with the **Temperature** metric selected, dashed CPU/GPU limit lines appear.
+   - From the dashboard, click **Configure alert thresholds**, set CPU/GPU warning + critical levels,
+     and **Save** (a warning must be below its critical, else the save is rejected with a 400).
+   - The console emits a single `{"v":1,"t":"cfg","cpu_warn":...,"cpu_crit":...,"gpu_warn":...,"gpu_crit":...}`
+     line on save (and once at startup). Reloading the config page shows the saved values (persisted
+     in the `Settings` table).
+   - On the dashboard with the **Temperature** metric selected, four dashed limit lines appear
+     (CPU warn/crit, GPU warn/crit).
 
 6. **Serial/display transport behaviour:**
    - With the ESP32 connected, the display still updates every second; serial is still preferred over

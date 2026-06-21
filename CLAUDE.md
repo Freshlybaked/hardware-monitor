@@ -59,11 +59,13 @@ Messages sent to the ESP32 display (over serial and UDP) are **versioned JSON ob
 - `net.dn`, `net.up` — numbers, Mbps (active adapter)
 - `disk` — object keyed by drive letter → % used; one key per tracked drive (see `Drives` in appsettings), so the count varies
 
-**Threshold config (`t":"cfg"`)** — sent once at startup and again whenever the user saves on the web config page. Carries the CPU/GPU temperature alert limits (°C) the display should warn at:
+**Threshold config (`t":"cfg"`)** — sent once at startup and again whenever the user saves on the web config page. Carries the CPU/GPU temperature alert levels (°C). Each component has a **warning** and a **critical** level (warning < critical) so the display can escalate:
 
 ```json
-{"v":1,"t":"cfg","cpu":80,"gpu":75}
+{"v":1,"t":"cfg","cpu_warn":75,"cpu_crit":90,"gpu_warn":70,"gpu_crit":85}
 ```
+
+- `cpu_warn`, `cpu_crit`, `gpu_warn`, `gpu_crit` — numbers, °C; the warning and critical limits per component. The API rejects a save unless each warning is below its critical.
 
 Telemetry is built in `SamplingService.CreatePayload`; the config line in `Thresholds.ToConfigPayload`. Both use `System.Text.Json` and are sent through `Web/DisplaySender` (serial preferred, else UDP). The string carries no trailing newline — `SerialWriter` appends `"\n"`, and UDP frames per datagram. (Previously the telemetry format was `"CC:GG"`, two zero-padded integers; replaced because it couldn't represent the added metrics or a variable number of drives.)
 

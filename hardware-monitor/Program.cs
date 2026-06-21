@@ -120,7 +120,9 @@ repository.Initialize();
 // Push the current alert thresholds to the display once at startup so a freshly powered display
 // knows the limits immediately (falls back to the configured defaults until the user saves).
 var display = app.Services.GetRequiredService<DisplaySender>();
-var startupThresholds = repository.GetThresholds(new Thresholds(options.CpuTempThreshold, options.GpuTempThreshold));
+var startupThresholds = repository.GetThresholds(new Thresholds(
+    options.CpuWarnThreshold, options.CpuCritThreshold,
+    options.GpuWarnThreshold, options.GpuCritThreshold));
 await display.SendAsync(startupThresholds.ToConfigPayload());
 Console.WriteLine($"Sent startup thresholds: {startupThresholds.ToConfigPayload()}");
 

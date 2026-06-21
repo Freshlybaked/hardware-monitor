@@ -177,8 +177,10 @@ public class TelemetryRepository
         }
     }
 
-    private const string CpuThresholdKey = "threshold_cpu_temp";
-    private const string GpuThresholdKey = "threshold_gpu_temp";
+    private const string CpuWarnKey = "threshold_cpu_warn";
+    private const string CpuCritKey = "threshold_cpu_crit";
+    private const string GpuWarnKey = "threshold_gpu_warn";
+    private const string GpuCritKey = "threshold_gpu_crit";
 
     /// <summary>
     /// Reads the saved alert thresholds, falling back to <paramref name="defaults"/> for any value
@@ -190,22 +192,31 @@ public class TelemetryRepository
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT Key, Value FROM Settings WHERE Key IN ($cpu, $gpu);";
-            command.Parameters.AddWithValue("$cpu", CpuThresholdKey);
-            command.Parameters.AddWithValue("$gpu", GpuThresholdKey);
+            command.CommandText =
+                "SELECT Key, Value FROM Settings WHERE Key IN ($cw, $cc, $gw, $gc);";
+            command.Parameters.AddWithValue("$cw", CpuWarnKey);
+            command.Parameters.AddWithValue("$cc", CpuCritKey);
+            command.Parameters.AddWithValue("$gw", GpuWarnKey);
+            command.Parameters.AddWithValue("$gc", GpuCritKey);
 
-            double cpu = defaults.Cpu, gpu = defaults.Gpu;
+            double cpuWarn = defaults.CpuWarn, cpuCrit = defaults.CpuCrit;
+            double gpuWarn = defaults.GpuWarn, gpuCrit = defaults.GpuCrit;
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
                 string key = reader.GetString(0);
                 if (double.TryParse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture, out double value))
                 {
-                    if (key == CpuThresholdKey) cpu = value;
-                    else if (key == GpuThresholdKey) gpu = value;
+                    switch (key)
+                    {
+                        case CpuWarnKey: cpuWarn = value; break;
+                        case CpuCritKey: cpuCrit = value; break;
+                        case GpuWarnKey: gpuWarn = value; break;
+                        case GpuCritKey: gpuCrit = value; break;
+                    }
                 }
             }
-            return new Thresholds(cpu, gpu);
+            return new Thresholds(cpuWarn, cpuCrit, gpuWarn, gpuCrit);
         }
         catch (Exception ex)
         {
@@ -229,16 +240,22 @@ public class TelemetryRepository
             var keyParam = command.Parameters.Add("$key", SqliteType.Text);
             var valueParam = command.Parameters.Add("$value", SqliteType.Text);
 
-            keyParam.Value = CpuThresholdKey;
-            valueParam.Value = thresholds.Cpu.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            command.ExecuteNonQuery();
+            void Upsert(string key, double value)
+            {
+                keyParam.Value = key;
+                valueParam.Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                command.ExecuteNonQuery();
+            }
 
-            keyParam.Value = GpuThresholdKey;
-            valueParam.Value = thresholds.Gpu.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            command.ExecuteNonQuery();
+            Upsert(CpuWarnKey, thresholds.CpuWarn);
+            Upsert(CpuCritKey, thresholds.CpuCrit);
+            Upsert(GpuWarnKey, thresholds.GpuWarn);
+            Upsert(GpuCritKey, thresholds.GpuCrit);
 
             transaction.Commit();
-            _logger.LogInformation("Saved thresholds cpu={Cpu} gpu={Gpu}", thresholds.Cpu, thresholds.Gpu);
+            _logger.LogInformation(
+                "Saved thresholds cpu_warn={CpuWarn} cpu_crit={CpuCrit} gpu_warn={GpuWarn} gpu_crit={GpuCrit}",
+                thresholds.CpuWarn, thresholds.CpuCrit, thresholds.GpuWarn, thresholds.GpuCrit);
         }
         catch (Exception ex)
         {

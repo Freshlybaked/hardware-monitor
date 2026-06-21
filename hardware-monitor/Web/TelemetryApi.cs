@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -48,31 +49,51 @@ public static class TelemetryApi
             return Results.Json(new { inserted, hours = h });
         });
 
-        // GET /api/config/thresholds  -> the currently saved CPU/GPU temperature alert limits
+        // GET /api/config/thresholds  -> the currently saved CPU/GPU warn+crit temperature limits
         app.MapGet("/api/config/thresholds", (TelemetryRepository repo, IOptions<MonitorOptions> options) =>
         {
-            var defaults = new Thresholds(options.Value.CpuTempThreshold, options.Value.GpuTempThreshold);
-            var thresholds = repo.GetThresholds(defaults);
-            return Results.Json(new { cpu = thresholds.Cpu, gpu = thresholds.Gpu });
+            var defaults = DefaultThresholds(options.Value);
+            var t = repo.GetThresholds(defaults);
+            return Results.Json(new { cpu_warn = t.CpuWarn, cpu_crit = t.CpuCrit, gpu_warn = t.GpuWarn, gpu_crit = t.GpuCrit });
         });
 
         // POST /api/config/thresholds  -> validate, persist, and push the new limits to the display
         app.MapPost("/api/config/thresholds", async (ThresholdUpdate body, TelemetryRepository repo, DisplaySender display) =>
         {
-            if (!IsValidThreshold(body.Cpu) || !IsValidThreshold(body.Gpu))
+            if (!IsValidThreshold(body.CpuWarn) || !IsValidThreshold(body.CpuCrit) ||
+                !IsValidThreshold(body.GpuWarn) || !IsValidThreshold(body.GpuCrit))
             {
-                return Results.BadRequest(new { error = "CPU and GPU thresholds must be numbers between 30 and 120 (°C)." });
+                return Results.BadRequest(new { error = "All thresholds must be numbers between 30 and 120 (°C)." });
+            }
+            if (body.CpuWarn >= body.CpuCrit || body.GpuWarn >= body.GpuCrit)
+            {
+                return Results.BadRequest(new { error = "Each warning threshold must be below its critical threshold." });
             }
 
-            var thresholds = new Thresholds(body.Cpu, body.Gpu);
+            var thresholds = new Thresholds(body.CpuWarn, body.CpuCrit, body.GpuWarn, body.GpuCrit);
             repo.SaveThresholds(thresholds);
             bool sent = await display.SendAsync(thresholds.ToConfigPayload());
-            return Results.Json(new { cpu = thresholds.Cpu, gpu = thresholds.Gpu, sent });
+            return Results.Json(new
+            {
+                cpu_warn = thresholds.CpuWarn,
+                cpu_crit = thresholds.CpuCrit,
+                gpu_warn = thresholds.GpuWarn,
+                gpu_crit = thresholds.GpuCrit,
+                sent
+            });
         });
     }
 
-    /// <summary>Body of POST /api/config/thresholds (JSON, e.g. {"cpu":80,"gpu":75}).</summary>
-    public record ThresholdUpdate(double Cpu, double Gpu);
+    /// <summary>The configured fallback thresholds, used until the user saves their own.</summary>
+    private static Thresholds DefaultThresholds(MonitorOptions o) =>
+        new(o.CpuWarnThreshold, o.CpuCritThreshold, o.GpuWarnThreshold, o.GpuCritThreshold);
+
+    /// <summary>Body of POST /api/config/thresholds (JSON, e.g. {"cpu_warn":75,"cpu_crit":90,"gpu_warn":70,"gpu_crit":85}).</summary>
+    public record ThresholdUpdate(
+        [property: JsonPropertyName("cpu_warn")] double CpuWarn,
+        [property: JsonPropertyName("cpu_crit")] double CpuCrit,
+        [property: JsonPropertyName("gpu_warn")] double GpuWarn,
+        [property: JsonPropertyName("gpu_crit")] double GpuCrit);
 
     /// <summary>A threshold must be a real, finite temperature within a sane range.</summary>
     private static bool IsValidThreshold(double value) =>

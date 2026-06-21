@@ -35,6 +35,10 @@
       max-width: 420px;
     }
     .panel p.intro { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+    .group { margin-bottom: 20px; }
+    .group h2 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+    .row { display: flex; gap: 12px; }
+    .row .field { flex: 1; }
     .field { margin-bottom: 16px; }
     .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
     .field .unit { color: var(--muted); font-weight: 400; }
@@ -71,18 +75,37 @@
 
   <div class="panel">
     <p class="intro">
-      Set the temperature alert limits sent to the display. When you save, the new limits are stored
-      and pushed to the display immediately.
+      Set the warning and critical temperature levels sent to the display. The warning level must be
+      below the critical level. When you save, the new limits are stored and pushed to the display
+      immediately.
     </p>
 
     <form id="form">
-      <div class="field">
-        <label for="cpu">CPU temperature limit <span class="unit">(°C)</span></label>
-        <input type="number" id="cpu" min="30" max="120" step="1" required />
+      <div class="group">
+        <h2>CPU temperature <span class="unit" style="color:var(--muted);font-weight:400">(°C)</span></h2>
+        <div class="row">
+          <div class="field">
+            <label for="cpu_warn">Warning</label>
+            <input type="number" id="cpu_warn" min="30" max="120" step="1" required />
+          </div>
+          <div class="field">
+            <label for="cpu_crit">Critical</label>
+            <input type="number" id="cpu_crit" min="30" max="120" step="1" required />
+          </div>
+        </div>
       </div>
-      <div class="field">
-        <label for="gpu">GPU temperature limit <span class="unit">(°C)</span></label>
-        <input type="number" id="gpu" min="30" max="120" step="1" required />
+      <div class="group">
+        <h2>GPU temperature <span class="unit" style="color:var(--muted);font-weight:400">(°C)</span></h2>
+        <div class="row">
+          <div class="field">
+            <label for="gpu_warn">Warning</label>
+            <input type="number" id="gpu_warn" min="30" max="120" step="1" required />
+          </div>
+          <div class="field">
+            <label for="gpu_crit">Critical</label>
+            <input type="number" id="gpu_crit" min="30" max="120" step="1" required />
+          </div>
+        </div>
       </div>
       <button type="submit" id="save">Save</button>
       <div class="status" id="status"></div>
@@ -90,8 +113,10 @@
   </div>
 
   <script>
-    const cpuEl = document.getElementById('cpu');
-    const gpuEl = document.getElementById('gpu');
+    const cpuWarnEl = document.getElementById('cpu_warn');
+    const cpuCritEl = document.getElementById('cpu_crit');
+    const gpuWarnEl = document.getElementById('gpu_warn');
+    const gpuCritEl = document.getElementById('gpu_crit');
     const statusEl = document.getElementById('status');
     const saveBtn = document.getElementById('save');
 
@@ -105,8 +130,10 @@
         const res = await fetch('/api/config/thresholds');
         if (!res.ok) throw new Error('request failed');
         const data = await res.json();
-        cpuEl.value = data.cpu;
-        gpuEl.value = data.gpu;
+        cpuWarnEl.value = data.cpu_warn;
+        cpuCritEl.value = data.cpu_crit;
+        gpuWarnEl.value = data.gpu_warn;
+        gpuCritEl.value = data.gpu_crit;
       } catch (err) {
         setStatus('Could not load current thresholds: ' + err.message, 'err');
       }
@@ -120,14 +147,20 @@
         const res = await fetch('/api/config/thresholds', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cpu: Number(cpuEl.value), gpu: Number(gpuEl.value) })
+          body: JSON.stringify({
+            cpu_warn: Number(cpuWarnEl.value),
+            cpu_crit: Number(cpuCritEl.value),
+            gpu_warn: Number(gpuWarnEl.value),
+            gpu_crit: Number(gpuCritEl.value)
+          })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'request failed');
+        const summary = `CPU ${data.cpu_warn}/${data.cpu_crit}°C, GPU ${data.gpu_warn}/${data.gpu_crit}°C (warn/crit)`;
         setStatus(
           data.sent
-            ? `Saved. Sent to display: CPU ${data.cpu}°C, GPU ${data.gpu}°C.`
-            : `Saved CPU ${data.cpu}°C, GPU ${data.gpu}°C — but no display is connected, so nothing was sent.`,
+            ? `Saved. Sent to display: ${summary}.`
+            : `Saved ${summary} — but no display is connected, so nothing was sent.`,
           data.sent ? 'ok' : 'err'
         );
       } catch (err) {

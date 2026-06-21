@@ -82,7 +82,50 @@ public static class TelemetryApi
                 sent
             });
         });
+
+        // GET /api/config/drives  -> the machine's fixed drives + which are currently tracked
+        app.MapGet("/api/config/drives", (TelemetryRepository repo, IOptions<MonitorOptions> options) =>
+        {
+            var available = StorageDrives.AvailableFixedDrives().Select(StorageDrives.Letter).ToList();
+            var saved = repo.GetTrackedDrives();
+            // Reflect what's actually active on first load: saved selection, else the resolved appsettings set.
+            var tracked = saved is { Count: > 0 }
+                ? saved.Select(NormalizeLetter).ToList()
+                : StorageDrives.Resolve(options.Value.Drives).Select(StorageDrives.Letter).ToList();
+            return Results.Json(new { available, tracked });
+        });
+
+        // POST /api/config/drives  -> validate against the available fixed drives, persist (restart to apply)
+        app.MapPost("/api/config/drives", (DriveSelection body, TelemetryRepository repo) =>
+        {
+            var available = StorageDrives.AvailableFixedDrives().Select(StorageDrives.Letter).ToHashSet();
+            var requested = (body.Drives ?? Array.Empty<string>())
+                .Select(NormalizeLetter)
+                .Where(l => l.Length > 0)
+                .Distinct()
+                .ToList();
+
+            if (requested.Count == 0)
+            {
+                return Results.BadRequest(new { error = "Select at least one drive to track." });
+            }
+            var unknown = requested.Where(l => !available.Contains(l)).ToList();
+            if (unknown.Count > 0)
+            {
+                return Results.BadRequest(new { error = $"Unknown or unavailable drive(s): {string.Join(", ", unknown)}." });
+            }
+
+            repo.SaveTrackedDrives(requested);
+            return Results.Json(new { tracked = requested, restartRequired = true });
+        });
     }
+
+    /// <summary>Body of POST /api/config/drives, e.g. {"drives":["C","D"]}.</summary>
+    public record DriveSelection([property: JsonPropertyName("drives")] string[] Drives);
+
+    /// <summary>Normalizes loose drive input ("c:\", "D:") to a bare uppercase letter ("C", "D").</summary>
+    private static string NormalizeLetter(string raw) =>
+        (raw ?? string.Empty).Trim().TrimEnd('\\', '/', ':').ToUpperInvariant();
 
     /// <summary>The configured fallback thresholds, used until the user saves their own.</summary>
     private static Thresholds DefaultThresholds(MonitorOptions o) =>

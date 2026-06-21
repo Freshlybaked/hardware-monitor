@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
@@ -36,8 +37,17 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection(MonitorOptions.SectionName));
 var options = builder.Configuration.GetSection(MonitorOptions.SectionName).Get<MonitorOptions>() ?? new MonitorOptions();
 
-// Resolve the drives we'll track (defaults to the system drive) and build the metric catalog.
-var drives = StorageDrives.Resolve(options.Drives);
+// Read any drive selection saved from the web config page before resolving drives. A throwaway
+// repository instance is used here just for the startup read; the runtime instance (with a proper
+// logger) is registered with the container below. Initialize is idempotent (CREATE TABLE IF NOT
+// EXISTS), so calling it here and again after the host is built is safe.
+var bootstrapRepository = new TelemetryRepository(options.DatabasePath, NullLogger<TelemetryRepository>.Instance);
+bootstrapRepository.Initialize();
+var savedDrives = bootstrapRepository.GetTrackedDrives();
+
+// Effective drive list: saved web selection (if any) > appsettings Drives > system drive.
+var driveSpecs = savedDrives is { Count: > 0 } ? savedDrives : (IEnumerable<string>?)options.Drives;
+var drives = StorageDrives.Resolve(driveSpecs);
 var catalog = new MetricCatalog(drives.Select(StorageDrives.Letter));
 
 // ---------------------------------------------------------------------------

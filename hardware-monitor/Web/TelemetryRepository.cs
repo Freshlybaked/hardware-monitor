@@ -263,6 +263,58 @@ public class TelemetryRepository
         }
     }
 
+    private const string TrackedDrivesKey = "tracked_drives";
+
+    /// <summary>
+    /// Reads the saved tracked-drive selection (a JSON array of bare letters, e.g. ["C","D"]).
+    /// Returns <c>null</c> if the user has never saved a selection or if the read/parse fails, so the
+    /// caller can fall back to appsettings.
+    /// </summary>
+    public List<string>? GetTrackedDrives()
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Value FROM Settings WHERE Key = $key;";
+            command.Parameters.AddWithValue("$key", TrackedDrivesKey);
+
+            if (command.ExecuteScalar() is string json)
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read tracked drives; falling back to configured defaults");
+            return null;
+        }
+    }
+
+    /// <summary>Upserts the tracked-drive selection as a JSON array. Failures are logged and swallowed.</summary>
+    public void SaveTrackedDrives(IEnumerable<string> letters)
+    {
+        try
+        {
+            string json = System.Text.Json.JsonSerializer.Serialize(letters.ToList());
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO Settings (Key, Value) VALUES ($key, $value)
+                ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value;
+                """;
+            command.Parameters.AddWithValue("$key", TrackedDrivesKey);
+            command.Parameters.AddWithValue("$value", json);
+            command.ExecuteNonQuery();
+            _logger.LogInformation("Saved tracked drives {Drives}", json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save tracked drives");
+        }
+    }
+
     /// <summary>
     /// Dev helper: seeds synthetic readings for the supplied metrics at one-minute spacing over the
     /// past <paramref name="hours"/> hours so the charts can be demonstrated without waiting.

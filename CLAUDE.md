@@ -57,7 +57,7 @@ Messages sent to the ESP32 display (over serial and UDP) are **versioned JSON ob
 - `cpu`, `gpu` — integers, °C
 - `ram` — number, % used
 - `net.dn`, `net.up` — numbers, Mbps (active adapter)
-- `disk` — object keyed by drive letter → % used; one key per tracked drive (see `Drives` in appsettings), so the count varies
+- `disk` — object keyed by drive letter → % used; one key per tracked drive, so the count varies. The tracked-drive list is resolved at startup, preferring the web config selection (`tracked_drives` in the SQLite `Settings` table, set on the config page) over the `Drives` list in appsettings; changing it requires an app restart.
 
 **Threshold config (`t":"cfg"`)** — sent once at startup and again whenever the user saves on the web config page. Carries the CPU/GPU temperature alert levels (°C). Each component has a **warning** and a **critical** level (warning < critical) so the display can escalate:
 

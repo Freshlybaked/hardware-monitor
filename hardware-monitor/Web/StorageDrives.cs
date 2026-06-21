@@ -45,4 +45,22 @@ public static class StorageDrives
 
     /// <summary>The bare drive letter for naming/labels, e.g. "C:\" -&gt; "C".</summary>
     public static string Letter(DriveInfo drive) => drive.Name.TrimEnd('\\', '/', ':').ToUpperInvariant();
+
+    /// <summary>
+    /// The ready, fixed drives present on the machine — the candidate set offered on the config page.
+    /// Excludes removable, network and unmounted drives.
+    /// </summary>
+    public static List<DriveInfo> AvailableFixedDrives()
+    {
+        try
+        {
+            return DriveInfo.GetDrives()
+                .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                .ToList();
+        }
+        catch
+        {
+            return new List<DriveInfo>();
+        }
+    }
 }

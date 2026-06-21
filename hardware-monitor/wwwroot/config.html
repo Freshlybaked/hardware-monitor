@@ -67,6 +67,10 @@
     .status { font-size: 13px; margin-top: 14px; min-height: 18px; }
     .status.ok { color: var(--ok); }
     .status.err { color: var(--err); }
+    .checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 16px; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .muted { color: var(--muted); font-size: 13px; }
   </style>
 </head>
 <body>
@@ -109,6 +113,22 @@
       </div>
       <button type="submit" id="save">Save</button>
       <div class="status" id="status"></div>
+    </form>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <p class="intro">
+      Choose which storage drives to collect usage metrics for. Changes take effect after the app is
+      restarted.
+    </p>
+
+    <form id="drivesForm">
+      <div class="group">
+        <h2>Storage drives</h2>
+        <div class="checks" id="driveList"><span class="muted">Loading drives…</span></div>
+      </div>
+      <button type="submit" id="saveDrives">Save drives</button>
+      <div class="status" id="drivesStatus"></div>
     </form>
   </div>
 
@@ -171,6 +191,72 @@
     });
 
     load();
+
+    // ---- Storage drives ----
+    const driveListEl = document.getElementById('driveList');
+    const drivesStatusEl = document.getElementById('drivesStatus');
+    const saveDrivesBtn = document.getElementById('saveDrives');
+
+    function setDrivesStatus(msg, kind) {
+      drivesStatusEl.textContent = msg;
+      drivesStatusEl.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    async function loadDrives() {
+      try {
+        const res = await fetch('/api/config/drives');
+        if (!res.ok) throw new Error('request failed');
+        const data = await res.json();
+        const tracked = new Set(data.tracked || []);
+        if (!data.available || data.available.length === 0) {
+          driveListEl.innerHTML = '<span class="muted">No fixed drives detected.</span>';
+          return;
+        }
+        driveListEl.innerHTML = '';
+        data.available.forEach(letter => {
+          const id = 'drive_' + letter;
+          const wrap = document.createElement('label');
+          wrap.className = 'check';
+          wrap.htmlFor = id;
+          wrap.innerHTML =
+            `<input type="checkbox" id="${id}" value="${letter}"${tracked.has(letter) ? ' checked' : ''} />` +
+            `<span>${letter}:</span>`;
+          driveListEl.appendChild(wrap);
+        });
+      } catch (err) {
+        setDrivesStatus('Could not load drives: ' + err.message, 'err');
+      }
+    }
+
+    document.getElementById('drivesForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const selected = [...driveListEl.querySelectorAll('input:checked')].map(c => c.value);
+      if (selected.length === 0) {
+        setDrivesStatus('Select at least one drive to track.', 'err');
+        return;
+      }
+      saveDrivesBtn.disabled = true;
+      setDrivesStatus('Saving…');
+      try {
+        const res = await fetch('/api/config/drives', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ drives: selected })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'request failed');
+        setDrivesStatus(
+          `Saved: ${data.tracked.map(d => d + ':').join(', ')}. Restart the app for the change to take effect.`,
+          'ok'
+        );
+      } catch (err) {
+        setDrivesStatus('Save failed: ' + err.message, 'err');
+      } finally {
+        saveDrivesBtn.disabled = false;
+      }
+    });
+
+    loadDrives();
   </script>
 </body>
 </html>

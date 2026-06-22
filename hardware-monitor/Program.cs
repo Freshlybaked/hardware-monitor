@@ -55,7 +55,11 @@ var catalog = new MetricCatalog(drives.Select(StorageDrives.Letter));
 // These prompts must run on the console before the web host takes over.
 // ---------------------------------------------------------------------------
 
-bool debugMode = doEnableDebugMode();
+bool debugMode = false;
+#if DEBUG
+debugMode = doEnableDebugMode();
+#endif
+ 
 ISensorRetriever sensorRetriever;
 
 if (debugMode)

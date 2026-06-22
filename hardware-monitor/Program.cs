@@ -1,5 +1,13 @@
 ﻿using System.Diagnostics;
+using hardware_monitor.Web;
 using LibreHardwareMonitor.PawnIo;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // This application requires PawnIO to be installed
 if (!PawnIo.IsInstalled)
@@ -19,16 +27,48 @@ if (!PawnIo.IsInstalled)
     return;
 }
 
-bool debugMode = doEnableDebugMode();
+// ---------------------------------------------------------------------------
+// Configuration first, so the sensor retriever and metric catalog can be built
+// from the configured drive list before the interactive startup runs.
+// ---------------------------------------------------------------------------
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection(MonitorOptions.SectionName));
+var options = builder.Configuration.GetSection(MonitorOptions.SectionName).Get<MonitorOptions>() ?? new MonitorOptions();
+
+// Read any drive selection saved from the web config page before resolving drives. A throwaway
+// repository instance is used here just for the startup read; the runtime instance (with a proper
+// logger) is registered with the container below. Initialize is idempotent (CREATE TABLE IF NOT
+// EXISTS), so calling it here and again after the host is built is safe.
+var bootstrapRepository = new TelemetryRepository(options.DatabasePath, NullLogger<TelemetryRepository>.Instance);
+bootstrapRepository.Initialize();
+var savedDrives = bootstrapRepository.GetTrackedDrives();
+
+// Effective drive list: saved web selection (if any) > appsettings Drives > system drive.
+var driveSpecs = savedDrives is { Count: > 0 } ? savedDrives : (IEnumerable<string>?)options.Drives;
+var drives = StorageDrives.Resolve(driveSpecs);
+var catalog = new MetricCatalog(drives.Select(StorageDrives.Letter));
+
+// ---------------------------------------------------------------------------
+// Interactive startup (unchanged): pick mode, sensors, display transport.
+// These prompts must run on the console before the web host takes over.
+// ---------------------------------------------------------------------------
+
+bool debugMode = false;
+#if DEBUG
+debugMode = doEnableDebugMode();
+#endif
+ 
 ISensorRetriever sensorRetriever;
 
-if(debugMode)
+if (debugMode)
 {
-    sensorRetriever = new DebugSensorRetriever();
+    sensorRetriever = new DebugSensorRetriever(drives);
 }
 else
 {
-    sensorRetriever = new SensorRetriever();
+    sensorRetriever = new SensorRetriever(drives);
 }
 
 // Init sensor retriever which retrieves CPU and GPU instances
@@ -40,55 +80,81 @@ bool serialAvailable = serialWriter.TryOpenPort();
 Console.WriteLine($"Is Serial Available: {serialAvailable}");
 
 // init telemetry sender for Grafana Cloud via Alloy
-TelemetrySender telemetrySender = new();
-Console.WriteLine("Telemetry sender initialized (sending to Alloy on localhost:4318)");
+// TelemetrySender telemetrySender = new();
+// Console.WriteLine("Telemetry sender initialized (sending to Alloy on localhost:4318)");
 
 // try to retrieve udp port
 UdpSender udpSender = new("_esp32udp._udp.local.", "sensordisplay", "_esp32udp");
 bool udpAvailable = await udpSender.FindEsp32Ip();
 Console.WriteLine($"Is UDP Available: {udpAvailable}");
 
-while (true)
+// ---------------------------------------------------------------------------
+// Build the single in-process host: sampling loop + persistence + web API.
+// ---------------------------------------------------------------------------
+
+// Bind Kestrel to localhost only (the configured URL uses 'localhost').
+builder.WebHost.UseUrls(options.WebUrl);
+
+// Share the already-initialized objects with the hosted services / API.
+builder.Services.AddSingleton(sensorRetriever);
+builder.Services.AddSingleton(serialWriter);
+builder.Services.AddSingleton(udpSender);
+builder.Services.AddSingleton(catalog);
+// builder.Services.AddSingleton(telemetrySender);
+builder.Services.AddSingleton<LatestReadings>();
+
+// Single send path to the display (serial preferred, else UDP), shared by the sampling loop and
+// the config endpoint. Carries the startup-determined transport availability flags.
+builder.Services.AddSingleton(sp => new DisplaySender(
+    serialWriter, serialAvailable,
+    udpSender, udpAvailable,
+    sp.GetRequiredService<ILogger<DisplaySender>>()));
+
+// SQLite repository (logger injected by the container).
+builder.Services.AddSingleton(sp => new TelemetryRepository(
+    options.DatabasePath,
+    sp.GetRequiredService<ILogger<TelemetryRepository>>()));
+
+// Sampling loop sends via the shared DisplaySender.
+builder.Services.AddHostedService(sp => new SamplingService(
+    sp.GetRequiredService<ISensorRetriever>(),
+    sp.GetRequiredService<DisplaySender>(),
+    // sp.GetRequiredService<TelemetrySender>(),
+    sp.GetRequiredService<LatestReadings>(),
+    sp.GetRequiredService<ILogger<SamplingService>>()));
+
+builder.Services.AddHostedService<PersistenceService>();
+
+var app = builder.Build();
+
+// Create schema + enable WAL before anything reads/writes.
+var repository = app.Services.GetRequiredService<TelemetryRepository>();
+repository.Initialize();
+
+// Push the current alert thresholds to the display once at startup so a freshly powered display
+// knows the limits immediately (falls back to the configured defaults until the user saves).
+var display = app.Services.GetRequiredService<DisplaySender>();
+var startupThresholds = repository.GetThresholds(new Thresholds(
+    options.CpuWarnThreshold, options.CpuCritThreshold,
+    options.GpuWarnThreshold, options.GpuCritThreshold));
+await display.SendAsync(startupThresholds.ToConfigPayload());
+Console.WriteLine($"Sent startup thresholds: {startupThresholds.ToConfigPayload()}");
+
+// Serve the dashboard (wwwroot/index.html) and the JSON API.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.MapTelemetryApi();
+
+Console.WriteLine($"Web dashboard available at {options.WebUrl}");
+
+try
 {
-    int cpuTemp = sensorRetriever.GetCPUTemp();
-    int gpuTemp = sensorRetriever.GetGPUTemp();
-
-    telemetrySender.RecordTemperatures(cpuTemp, gpuTemp);
-
-    string payload = createPayload(cpuTemp, gpuTemp);
-    Console.WriteLine($"Payload: {payload}");
-
-    // we prioritise sending over serial port
-    if (serialAvailable)
-    {
-        Console.WriteLine($"Sending payload {payload} over serial");
-        serialWriter.SendMessage(payload);
-    }
-    else if(udpAvailable)
-    {
-        Console.WriteLine($"Sending payload {payload} over udp");
-        await udpSender.SendMessage(payload);
-    }
-
-    // send updates every second
-    Thread.Sleep(1000);
+    app.Run();
 }
-
-static string createPayload(int cpuTemp, int gpuTemp)
+finally
 {
-    string cpuStr = cpuTemp.ToString();
-    if (cpuTemp < 10)
-    {
-        cpuStr = "0" + cpuStr;
-    }
-
-    string gpuStr = gpuTemp.ToString();
-    if (gpuTemp < 10)
-    {
-        gpuStr = "0" + gpuStr;
-    }
-
-    return cpuStr + ":" + gpuStr;
+    // Flush the final OpenTelemetry export on shutdown.
+    // telemetrySender.Dispose();
 }
 
 static bool doEnableDebugMode()

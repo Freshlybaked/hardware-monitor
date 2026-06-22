@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hardware Monitor · Configuration</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a212b;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --border: #2a3441;
+      --accent: #4ea1ff;
+      --ok: #5fd38d;
+      --err: #ff7a59;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+    .nav { margin-bottom: 20px; }
+    .nav a { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .nav a:hover { text-decoration: underline; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 22px;
+      max-width: 420px;
+    }
+    .panel p.intro { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+    .group { margin-bottom: 20px; }
+    .group h2 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+    .row { display: flex; gap: 12px; }
+    .row .field { flex: 1; }
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+    .field .unit { color: var(--muted); font-weight: 400; }
+    input[type="number"] {
+      width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 16px;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: .6; cursor: default; }
+    .status { font-size: 13px; margin-top: 14px; min-height: 18px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    .checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 16px; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .muted { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Configuration</h1>
+  <div class="nav"><a href="/">&larr; Back to dashboard</a></div>
+
+  <div class="panel">
+    <p class="intro">
+      Set the warning and critical temperature levels sent to the display. The warning level must be
+      below the critical level. When you save, the new limits are stored and pushed to the display
+      immediately.
+    </p>
+
+    <form id="form">
+      <div class="group">
+        <h2>CPU temperature <span class="unit" style="color:var(--muted);font-weight:400">(°C)</span></h2>
+        <div class="row">
+          <div class="field">
+            <label for="cpu_warn">Warning</label>
+            <input type="number" id="cpu_warn" min="30" max="120" step="1" required />
+          </div>
+          <div class="field">
+            <label for="cpu_crit">Critical</label>
+            <input type="number" id="cpu_crit" min="30" max="120" step="1" required />
+          </div>
+        </div>
+      </div>
+      <div class="group">
+        <h2>GPU temperature <span class="unit" style="color:var(--muted);font-weight:400">(°C)</span></h2>
+        <div class="row">
+          <div class="field">
+            <label for="gpu_warn">Warning</label>
+            <input type="number" id="gpu_warn" min="30" max="120" step="1" required />
+          </div>
+          <div class="field">
+            <label for="gpu_crit">Critical</label>
+            <input type="number" id="gpu_crit" min="30" max="120" step="1" required />
+          </div>
+        </div>
+      </div>
+      <button type="submit" id="save">Save</button>
+      <div class="status" id="status"></div>
+    </form>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <p class="intro">
+      Choose which storage drives to collect usage metrics for. Changes take effect after the app is
+      restarted.
+    </p>
+
+    <form id="drivesForm">
+      <div class="group">
+        <h2>Storage drives</h2>
+        <div class="checks" id="driveList"><span class="muted">Loading drives…</span></div>
+      </div>
+      <button type="submit" id="saveDrives">Save drives</button>
+      <div class="status" id="drivesStatus"></div>
+    </form>
+  </div>
+
+  <script>
+    const cpuWarnEl = document.getElementById('cpu_warn');
+    const cpuCritEl = document.getElementById('cpu_crit');
+    const gpuWarnEl = document.getElementById('gpu_warn');
+    const gpuCritEl = document.getElementById('gpu_crit');
+    const statusEl = document.getElementById('status');
+    const saveBtn = document.getElementById('save');
+
+    function setStatus(msg, kind) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/config/thresholds');
+        if (!res.ok) throw new Error('request failed');
+        const data = await res.json();
+        cpuWarnEl.value = data.cpu_warn;
+        cpuCritEl.value = data.cpu_crit;
+        gpuWarnEl.value = data.gpu_warn;
+        gpuCritEl.value = data.gpu_crit;
+      } catch (err) {
+        setStatus('Could not load current thresholds: ' + err.message, 'err');
+      }
+    }
+
+    document.getElementById('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      setStatus('Saving…');
+      try {
+        const res = await fetch('/api/config/thresholds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cpu_warn: Number(cpuWarnEl.value),
+            cpu_crit: Number(cpuCritEl.value),
+            gpu_warn: Number(gpuWarnEl.value),
+            gpu_crit: Number(gpuCritEl.value)
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'request failed');
+        const summary = `CPU ${data.cpu_warn}/${data.cpu_crit}°C, GPU ${data.gpu_warn}/${data.gpu_crit}°C (warn/crit)`;
+        setStatus(
+          data.sent
+            ? `Saved. Sent to display: ${summary}.`
+            : `Saved ${summary} — but no display is connected, so nothing was sent.`,
+          data.sent ? 'ok' : 'err'
+        );
+      } catch (err) {
+        setStatus('Save failed: ' + err.message, 'err');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    load();
+
+    // ---- Storage drives ----
+    const driveListEl = document.getElementById('driveList');
+    const drivesStatusEl = document.getElementById('drivesStatus');
+    const saveDrivesBtn = document.getElementById('saveDrives');
+
+    function setDrivesStatus(msg, kind) {
+      drivesStatusEl.textContent = msg;
+      drivesStatusEl.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    async function loadDrives() {
+      try {
+        const res = await fetch('/api/config/drives');
+        if (!res.ok) throw new Error('request failed');
+        const data = await res.json();
+        const tracked = new Set(data.tracked || []);
+        if (!data.available || data.available.length === 0) {
+          driveListEl.innerHTML = '<span class="muted">No fixed drives detected.</span>';
+          return;
+        }
+        driveListEl.innerHTML = '';
+        data.available.forEach(letter => {
+          const id = 'drive_' + letter;
+          const wrap = document.createElement('label');
+          wrap.className = 'check';
+          wrap.htmlFor = id;
+          wrap.innerHTML =
+            `<input type="checkbox" id="${id}" value="${letter}"${tracked.has(letter) ? ' checked' : ''} />` +
+            `<span>${letter}:</span>`;
+          driveListEl.appendChild(wrap);
+        });
+      } catch (err) {
+        setDrivesStatus('Could not load drives: ' + err.message, 'err');
+      }
+    }
+
+    document.getElementById('drivesForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const selected = [...driveListEl.querySelectorAll('input:checked')].map(c => c.value);
+      if (selected.length === 0) {
+        setDrivesStatus('Select at least one drive to track.', 'err');
+        return;
+      }
+      saveDrivesBtn.disabled = true;
+      setDrivesStatus('Saving…');
+      try {
+        const res = await fetch('/api/config/drives', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ drives: selected })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'request failed');
+        setDrivesStatus(
+          `Saved: ${data.tracked.map(d => d + ':').join(', ')}. Restart the app for the change to take effect.`,
+          'ok'
+        );
+      } catch (err) {
+        setDrivesStatus('Save failed: ' + err.message, 'err');
+      } finally {
+        saveDrivesBtn.disabled = false;
+      }
+    });
+
+    loadDrives();
+  </script>
+</body>
+</html>

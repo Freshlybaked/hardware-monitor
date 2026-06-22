@@ -1,0 +1,59 @@
+script
+
+[Intro]
+Hello, im samuel johan barnard from the bachelor of computer science course from university of portsmouth.
+Today ill be showing you my completed final year project, the personal observability desktop appliance.
+
+[Abstract]
+Observability takes 2 broad shapes, real time monitoring and alerting, and historical telemetry.
+The first gives you immediate information on whats happening, while the second gives you historical information on what already happened.
+Both are useful to give you a complete view into a system.
+
+Real time tools such as HWInfo or MSI afterburner give users real time monitoring, whereas historical telemetry usually involves integration 
+with a dashboarding application such as Grafana and Prometheus, assuming the monitoring tool can output historical data.
+
+The aim of this project is to create a single, easy to use appliance that bridges both functions.
+It provides real time monitoring and alerting by way of the dedicated display device, and historical telemetry by the web dashboard.
+
+[Demo]
+First id like to show you the appliance in action. 
+I will connect the hardware [connect the device, and show the default info screen]
+I will then start the server application [start it now]. I will run in normal mode because i want to actually get telemetry from my system.
+Right now, you can see that the CPU and GPU temperatures are as such [show in msi afterburner?].
+
+Lets see what happens when we turn a game on. [turn on something]
+We can see that the temperatures have risen, and the max values have gone up as well.
+
+Lets cycle through the screens to show you the other metrics. [cycle now]
+
+[turn off game]
+
+Now lets take a look at the telemetry dashboard. [go to localhost:5005]
+We can see the data was collected. 
+I can choose to view the last 1 hour of data, or 24 hours or 7 days.
+
+We can also view the telemetry for the other metrics by selecting the dropdown filter, and we also have access to the same date range filters.
+
+So now lets go back to temperatures and talk about alerting.
+On here we can see a few threshold lines, the warning and critical lines for cpu and gpu temperatures.
+These form the basis for alerting on the display device.
+
+If any of these 2 values go above the critical threshold, the red LED will turn on.
+If any of these 2 values go above the warning threshold, the yellow LED will turn on.
+Lastly, if both temperatures are below the warning threshold, the green LED will stay on to denote a healthy system.
+
+I will demonstrate this by using the configuration panel. [go to config panel]
+If we take a look at the device, its currently on green, and we want to induce a warning state.
+So im going to set my cpu warning threshold to be lower than the current temperature were seeing. [set cpu warning to current temp - 20]
+We see the yellow LED turn on.
+
+Now lets induce a critical state.
+Ill set the GPU critical temp to be lower than the current temperature. [set gpu critical to current temp - 10, and warning to current temp - 20]
+We have to lower the warning threshold as well as we cant have a critical threshold thats lower than the warning threshold.
+And we can see the red LED turn on, even though the CPU is in warning state. This is because the critical state is more important for the user to know about.
+
+Lets return to a healthy state. [set cpu warning to 70, gpu warning to 70 and critical to 90]
+were back to a healthy system.
+
+[outro]
+This has been a demonstration of my personal observability desktop appliance, and thank you for listening.

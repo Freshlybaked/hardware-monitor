@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hardware Monitor</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a212b;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --border: #2a3441;
+      --accent: #4ea1ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+    .nav { margin-bottom: 20px; }
+    .nav a { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .nav a:hover { text-decoration: underline; }
+    .readouts { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      min-width: 120px;
+    }
+    .card .label { font-size: 13px; font-weight: 600; }
+    .card .sub { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .card .value { font-size: 32px; font-weight: 700; margin-top: 6px; }
+    .controls { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+    .controls .spacer { width: 16px; }
+    label.lbl { color: var(--muted); font-size: 14px; margin-right: 2px; }
+    select, button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover, select:hover { border-color: var(--accent); }
+    button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .chart-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      height: 460px;
+    }
+    .status { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Hardware Monitor</h1>
+  <div class="nav"><a href="/config.html">Configure alert thresholds &rarr;</a></div>
+
+  <div class="readouts" id="readouts"></div>
+
+  <div class="controls">
+    <label class="lbl" for="groupSelect">Metric:</label>
+    <select id="groupSelect"></select>
+    <span class="spacer"></span>
+    <label class="lbl">Window:</label>
+    <button data-window="1h" class="active">Last 1 hour</button>
+    <button data-window="24h">Last 24 hours</button>
+    <button data-window="7d">Last 7 days</button>
+  </div>
+
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+  <div class="status" id="status"></div>
+
+  <script src="/lib/chart.umd.min.js"></script>
+  <script>
+    const PALETTE = ['#4ea1ff', '#ff7a59', '#5fd38d', '#c792ea', '#ffcb6b', '#f78c6c', '#82aaff'];
+    const readoutsEl = document.getElementById('readouts');
+    const statusEl = document.getElementById('status');
+    const groupSelect = document.getElementById('groupSelect');
+
+    let groups = [];                 // catalog groups from /api/telemetry/metrics
+    let metricMeta = {};             // metric name -> { unit, color, valueEl }
+    let currentGroup = null;         // selected group object
+    let currentWindow = '1h';
+    let chart = null;
+    let thresholds = null;           // { cpu_warn, cpu_crit, gpu_warn, gpu_crit } limits, shown on the temp chart
+
+    function formatTick(ms) {
+      const d = new Date(ms);
+      const pad = n => String(n).padStart(2, '0');
+      if (currentWindow === '7d') return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:00`;
+      if (currentWindow === '24h') return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    async function init() {
+      const res = await fetch('/api/telemetry/metrics');
+      groups = await res.json();
+
+      try { thresholds = await (await fetch('/api/config/thresholds')).json(); }
+      catch { thresholds = null; }
+
+      // Build readout cards + colour/unit lookup, and the group selector.
+      let colorIdx = 0;
+      groups.forEach(group => {
+        const opt = document.createElement('option');
+        opt.value = group.key;
+        opt.textContent = group.label;
+        groupSelect.appendChild(opt);
+
+        group.series.forEach(series => {
+          const color = PALETTE[colorIdx++ % PALETTE.length];
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML =
+            `<div class="label" style="color:${color}">${series.label}</div>` +
+            `<div class="sub">${group.label} · ${group.unit}</div>` +
+            `<div class="value">--</div>`;
+          readoutsEl.appendChild(card);
+          metricMeta[series.metric] = { unit: group.unit, color, valueEl: card.querySelector('.value') };
+        });
+      });
+
+      currentGroup = groups[0];
+      buildChart();
+
+      groupSelect.addEventListener('change', () => {
+        currentGroup = groups.find(g => g.key === groupSelect.value);
+        buildChart();
+        loadHistory();
+      });
+
+      document.querySelectorAll('.controls button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentWindow = btn.dataset.window;
+          loadHistory();
+        });
+      });
+
+      loadCurrent();
+      loadHistory();
+      setInterval(loadCurrent, 1000);
+      setInterval(loadHistory, 10000);
+    }
+
+    function buildChart() {
+      const unit = currentGroup.unit;
+      const yOpts = { title: { display: true, text: unit, color: '#8b949e' },
+                      ticks: { color: '#8b949e' }, grid: { color: '#2a344155' } };
+      if (unit === '%') { yOpts.min = 0; yOpts.max = 100; }
+      else if (unit === '°C') { yOpts.suggestedMin = 30; yOpts.suggestedMax = 90; }
+      else { yOpts.beginAtZero = true; }
+
+      const datasets = currentGroup.series.map(s => ({
+        label: `${s.label} (${unit})`,
+        data: [],
+        borderColor: metricMeta[s.metric].color,
+        backgroundColor: metricMeta[s.metric].color + '22',
+        borderWidth: 2, pointRadius: 0, tension: 0.25,
+        _metric: s.metric
+      }));
+
+      // On the temperature chart, overlay dashed horizontal lines at the configured warn/crit limits.
+      if (currentGroup.key === 'temp' && thresholds) {
+        datasets.push(makeLimitDataset('CPU warn', thresholds.cpu_warn, '#82aaff'));
+        datasets.push(makeLimitDataset('CPU crit', thresholds.cpu_crit, '#4ea1ff'));
+        datasets.push(makeLimitDataset('GPU warn', thresholds.gpu_warn, '#ffcb6b'));
+        datasets.push(makeLimitDataset('GPU crit', thresholds.gpu_crit, '#ff7a59'));
+      }
+
+      if (chart) chart.destroy();
+      chart = new Chart(document.getElementById('chart').getContext('2d'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { type: 'linear', ticks: { color: '#8b949e', maxTicksLimit: 10, callback: v => formatTick(v) },
+                 grid: { color: '#2a344155' } },
+            y: yOpts
+          },
+          plugins: {
+            legend: { labels: { color: '#e6edf3' } },
+            tooltip: { callbacks: { title: items => items.length ? formatTick(items[0].parsed.x) : '' } }
+          }
+        }
+      });
+    }
+
+    // A dashed, flat horizontal line marking an alert limit; its two points span the data range,
+    // filled in by loadHistory once the x-extent is known.
+    function makeLimitDataset(label, value, color) {
+      return {
+        label: `${label} (${value}°C)`,
+        data: [],
+        borderColor: color, borderWidth: 1.5, borderDash: [6, 6],
+        pointRadius: 0, tension: 0, fill: false,
+        _limit: value
+      };
+    }
+
+    async function loadHistory() {
+      if (!currentGroup) return;
+      try {
+        const results = await Promise.all(currentGroup.series.map(s =>
+          fetch(`/api/telemetry/history?metric=${s.metric}&window=${currentWindow}`).then(r => {
+            if (!r.ok) throw new Error('history request failed');
+            return r.json();
+          })
+        ));
+        let total = 0, minX = Infinity, maxX = -Infinity;
+        currentGroup.series.forEach((s, i) => {
+          const ds = chart.data.datasets.find(d => d._metric === s.metric);
+          ds.data = results[i].map(p => ({ x: p.t, y: p.v }));
+          total += results[i].length;
+          if (results[i].length) {
+            minX = Math.min(minX, results[i][0].t);
+            maxX = Math.max(maxX, results[i][results[i].length - 1].t);
+          }
+        });
+        // Stretch the limit lines across the loaded range (or hide them if there's no data yet).
+        chart.data.datasets.filter(d => d._limit != null).forEach(d => {
+          d.data = isFinite(minX) ? [{ x: minX, y: d._limit }, { x: maxX, y: d._limit }] : [];
+        });
+        chart.update();
+        statusEl.textContent = total
+          ? `${currentGroup.label}: ${total} points over the ${currentWindow} window. Updated ${new Date().toLocaleTimeString()}.`
+          : `No data yet for ${currentGroup.label} / ${currentWindow}. (Tip: POST /api/dev/seed?hours=24 for demo data.)`;
+      } catch (err) {
+        statusEl.textContent = 'Failed to load history: ' + err.message;
+      }
+    }
+
+    async function loadCurrent() {
+      try {
+        const res = await fetch('/api/telemetry/current');
+        if (!res.ok) return;
+        const data = await res.json();
+        for (const [metric, meta] of Object.entries(metricMeta)) {
+          const v = data.values ? data.values[metric] : undefined;
+          meta.valueEl.textContent = (v === undefined || v === null) ? '--' : v;
+        }
+      } catch { /* transient; ignore */ }
+    }
+
+    init();
+  </script>
+</body>
+</html>
